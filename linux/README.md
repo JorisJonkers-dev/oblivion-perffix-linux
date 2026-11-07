@@ -172,6 +172,32 @@ the heading sent by about 0.3 s (`--cam-lag`), which the sector assignment subtr
 are cut by variant window (the ledger's clock is anchored on the two sync stalls) and ranked per variant in
 `diag/ledger-<variant>.txt`.
 
+### Image cost: `--shots`
+
+For variants that change the picture (cvar sweeps such as foliage density or shadow bias) `--shots` measures what they
+cost. After every slot (outside the measured laps, so the fps numbers are untouched) the runner holds the camera at
+fixed headings (`--shot-headings`, default the eight sector centres 0,45,...,315), waits `--shot-settle` s (default 1.0,
+so temporal anti-aliasing converges), grabs the game window (xdotool + xwd, like `--detail`, block-averaged to about
+`--shot-width` 960 px, luminance only) and saves `shots/<variant>/s<slot>/<heading>.png`. Needs `xdotool` and `xwd`.
+
+After the run each variant is compared with `base` at the same heading (slot k of the variant against slot k of base,
+`--shot-pairs` pairs per heading, median): SSIM (8x8 windows), PSNR and the share of pixels that differ by more than
+`--diff-thresh` (24/255). The MangoHud counter and the scenario's HUD masks are left out. The noise floor is `base`
+against its own other slots (TAA, foliage motion and NPCs differ run to run): a variant is only judged by what it loses
+beyond that. Outputs: `shots/sbs/<variant>/<heading>.png` (base | variant | amplified difference heatmap),
+`images.md` (gallery with the numbers), and in `report.md` the column "SSIM vs base (noise floor)" plus a "Gain vs image
+cost" section with one verdict line per variant.
+
+Verdict = GAIN against COST. GAIN: avg fps up >= `--gain-fps` (5 %) and more than the slot-to-slot spread, or 1% / 0.1%
+low up >= `--gain-lows` (10 %), or hitches down >= `--gain-hitches` (25 %, and at least 3 fewer). COST: mean SSIM drop
+below the noise floor > `--ssim-max-drop` (0.015). ACCEPT = gain without cost, TRADE-OFF = gain with cost (look at the
+pictures), REJECT = cost without gain, NEUTRAL = neither.
+
+```sh
+python3 linux/bench.py spin --scene cheydinhal-canal --profile own --shots \
+    --variant fol80:cvar:foliage.DensityScale=0.8 --variant vsm:cvar:r.Shadow.Virtual.ResolutionLodBiasDirectional=0.5
+```
+
 ## Tuning the spare-block cache offline (OsPageCache)
 
 Record one trace in the game, then try policies without it (details: [docs/research-linux/ideas/oscache-sim.md](../docs/research-linux/ideas/oscache-sim.md)):

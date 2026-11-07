@@ -8,7 +8,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import dllvariant, diagwin, fixini, scenario, spin
+from . import detail, dllvariant, diagwin, fixini, imgcmp, scenario, spin, spinshots
 from .paths import REPO
 from .runner import Options, Runner
 
@@ -33,6 +33,16 @@ class SpinOptions(Options):
         self.cell = kw.get("cell")
         self.hour = kw.get("hour")
         self.weather = kw.get("weather")
+        self.shots = bool(kw.get("shots", False))
+        self.shot_headings = [float(h) for h in (kw.get("shot_headings") or spinshots.DEFAULT_HEADINGS)]
+        self.shot_settle = float(kw.get("shot_settle", 1.0))
+        self.shot_width = int(kw.get("shot_width", 960))
+        self.shot_pairs = int(kw.get("shot_pairs", 2))
+        self.shot_step = int(kw.get("shot_step", 2))
+        self.diff_thresh = int(kw.get("diff_thresh", 24))
+        self.diff_gain = int(kw.get("diff_gain", 4))
+        self.thresholds = {**spin.THRESHOLDS, **(kw.get("thresholds") or {})}
+        self.capturer_factory = kw.get("capturer_factory")        # tests: a fake window grabber
 
 
 class SpinRunner(Runner):
@@ -46,6 +56,8 @@ class SpinRunner(Runner):
         self.ini_now = {}
         self.cvar_now = {}
         self.order = []
+        self.shot_cap = None
+        self.shot_log = []
 
     # ------------------------------------------------------------ planning
 
@@ -55,6 +67,8 @@ class SpinRunner(Runner):
             raise spin.SpinError("--deg-per-sec must be positive")
         if o.laps < 1:
             raise spin.SpinError("--laps must be at least 1")
+        if o.shots and o.shot_settle < 0:
+            raise spin.SpinError("--shot-settle must not be negative")
         if o.pos:
             if bool(o.world) == bool(o.cell):
                 raise spin.SpinError("--pos needs exactly one of --world NAME or --cell NAME")
@@ -112,7 +126,8 @@ class SpinRunner(Runner):
     def estimate_seconds(self, scn, scenes):
         o = self.o
         lap = spin.lap_seconds(o.deg_per_sec)
-        return len(self.order) * (o.settle + lap * (o.laps + 1) + 2) + 30
+        shots = len(o.shot_headings) * (o.shot_settle + 0.6) if o.shots else 0
+        return len(self.order) * (o.settle + lap * (o.laps + 1) + 2 + shots) + 30
 
     def announce(self, scenes, estimate, fix_mode, limit_min):
         o = self.o
@@ -186,9 +201,54 @@ class SpinRunner(Runner):
                 self.say(f"slot {i}/{len(self.order)}: {name} ({o.laps} lap(s), {t1 - t0:.0f} s)")
                 self.tick_until(t1)
                 self.slots.append({"variant": name, "t0": t0, "t1": t1, "applied": applied})
+                if o.shots:
+                    self.slots[-1]["shots"] = self.shot_lap(name, len(self.slots))
                 self.check_pins(scene["id"])
         finally:
             self.put_back(ini_t, cvar_t)
+
+    def hold_heading(self, h, secs):
+        """Keeps the camera at heading h for `secs` s (look re-sent every look_interval; not noted in the timeline:
+        it is outside every measured window)."""
+        end = time.time() + secs
+        while True:
+            self.send(f"look {h % 360:.2f} {self.o.pitch:g}", timeout=5)
+            left = min(self.o.look_interval, end - time.time())
+            if left <= 0:
+                return
+            self.bridge.check()
+            time.sleep(left)
+
+    def grab_shot(self):
+        if self.shot_cap is None:
+            self.shot_cap = (self.o.capturer_factory() if self.o.capturer_factory
+                             else detail.Capturer(target_w=self.o.shot_width))
+        return self.shot_cap.grab()
+
+    def shot_lap(self, name, slot):
+        """After a measured slot: for each heading hold the camera still for --shot-settle s (temporal anti-aliasing
+        converges), grab the window and save shots/<variant>/s<slot>/<heading>.png. {heading name: rel path}."""
+        o = self.o
+        got = {}
+        for h in o.shot_headings:
+            hn = spinshots.heading_name(h)
+            try:
+                self.hold_heading(h, o.shot_settle)
+                t = time.time()
+                frame = self.grab_shot()
+                if detail.mean_luma(frame) < detail.MIN_MEAN:
+                    self.warn(f"shot {name} s{slot} {hn}: black picture")
+                    continue
+                rel = spinshots.shot_rel(name, slot, h)
+                path = self.run_dir / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                imgcmp.write_png(path, frame.w, frame.h, frame.pix)
+                got[hn] = rel
+                self.shot_log.append({"slot": slot, "variant": name, "heading": h, "t": round(t, 3)})
+            except (detail.CaptureError, OSError, ValueError, subprocess.SubprocessError) as e:
+                self.warn(f"shot {name} s{slot} {hn}: {e}")
+        self.say(f"shots {name} s{slot}: {len(got)}/{len(o.shot_headings)}")
+        return got
 
     def apply_variant(self, v, ini_t, cvar_t):
         applied = {}
@@ -257,7 +317,19 @@ class SpinRunner(Runner):
         self.result["spin"] = {
             "spot": self.spot, "degPerSec": o.deg_per_sec, "lapSec": spin.lap_seconds(o.deg_per_sec), "pitch": o.pitch,
             "laps": o.laps, "settle": o.settle, "rounds": o.rounds, "camLag": o.cam_lag, "startHeading": self.h0,
-            "order": self.order, "lookInterval": o.look_interval, "variantSpecs": [v.spec() for v in o.variants]}
+            "order": self.order, "lookInterval": o.look_interval, "variantSpecs": [v.spec() for v in o.variants],
+            "thresholds": o.thresholds}
+        if o.shots:
+            self.result["spin"]["shots"] = {"headings": o.shot_headings, "settle": o.shot_settle, "log": self.shot_log,
+                                            "pairs": o.shot_pairs, "diffThresh": o.diff_thresh}
+            try:
+                images = spinshots.analyse(run_dir, self.slots, o.variants, spinshots.all_masks(self.scn.get("masks")),
+                                           o.shot_headings, o.shot_pairs, o.diff_thresh, o.shot_step, o.diff_gain,
+                                           say=self.warn)
+                self.result["images"] = images
+                spin.apply_images(self.result.get("variants") or [], images, o.thresholds)
+            except Exception as e:
+                self.warn(f"image comparison failed: {e}")
         (run_dir / "heading-timeline.json").write_text(json.dumps(self.timeline.to_json()))
         try:
             self.split_ledger(run_dir)
