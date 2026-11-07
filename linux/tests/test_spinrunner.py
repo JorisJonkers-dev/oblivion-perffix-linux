@@ -1,5 +1,6 @@
 """A live session against the fake game of test_runner: ini and cvar variants in ABBA order, the heading timeline,
 slots sliced from the frame log, and everything put back (also after an error)."""
+import hashlib
 import json
 import re
 import sys
@@ -60,6 +61,8 @@ class SpinGame(FakeGame):
 class SpinTest(test_runner.RunnerTest):
     test_stock_run = None
     test_off_run_env = None
+    test_dll_installed_and_restored = None            # the installed ini differs here (INI): see the spin versions below
+    test_dll_and_ini_installed_and_restored = None
     fail_mode = None
 
     def setUp(self):
@@ -73,11 +76,11 @@ class SpinTest(test_runner.RunnerTest):
         self.game = g
         return g
 
-    def make_run(self, run_dir, out, fix):
-        opts = SpinOptions(scenario="mini", scenario_dir=self.tmp / "scen", scenes=["spot-noon"], label="spin-t",
+    def make_run(self, run_dir, out, fix, **extra):
+        opts = SpinOptions(scenario="mini", scenario_dir=self.tmp / "scen", scenes=["spot-noon"], fix=fix, label="spin-t",
                            warmup=0, steam="true", run_dir=run_dir, profile="small", launch_timeout=20,
                            variants=spin.parse_variants(self.variants), rounds=1, laps=1, settle=0.2,
-                           deg_per_sec=360, cam_lag=0.0, look_interval=0.05)
+                           deg_per_sec=360, cam_lag=0.0, look_interval=0.05, **extra)
         return SpinRunner(self.paths, opts, say=out.append).run()
 
     variants = ["off:ini:GpuSceneParallelUpload=0", "lod:cvar:r.Foo=2"]
@@ -88,6 +91,30 @@ class SpinTest(test_runner.RunnerTest):
             self.assertEqual(after.get(p), data, p)
         self.assertFalse(self.paths.env_file.exists())
         self.assertFalse((self.paths.win64 / "ue4ss").exists())
+
+    def test_dll_installed_and_restored_spin(self):
+        dll = self.tmp / "built.dll"
+        dll.write_bytes(b"MZ new build")
+        result, fake, out = self.run_fake("on", dll=dll)
+        self.assertEqual(result["outcome"], "ok", "\n".join(out))
+        self.assertEqual(fake.dll_at_launch, b"MZ new build")
+        self.assertEqual(fake.ini_at_launch, INI)                    # the installed ini stays
+        self.assertEqual(result["dll"]["sha256"], hashlib.sha256(dll.read_bytes()).hexdigest())
+        self.assert_all_put_back()
+
+    def test_dll_and_dll_ini_installed_and_restored(self):
+        # the installed ini lacks the key the ini variant flips; the --dll-ini one has it
+        self.paths.fix_ini.write_text(SAMPLE)
+        self.before[self.paths.fix_ini] = self.paths.fix_ini.read_bytes()
+        dll, ini = self.tmp / "b.dll", self.tmp / "b.ini"
+        dll.write_bytes(b"MZ spin build")
+        ini.write_text(INI)
+        result, fake, out = self.run_fake("on", dll=dll, dll_ini=ini)
+        self.assertEqual(result["outcome"], "ok", "\n".join(out))
+        self.assertEqual(fake.dll_at_launch, b"MZ spin build")
+        self.assertEqual(fake.ini_at_launch, INI)
+        self.assertEqual(result["dll"]["iniSha256"], hashlib.sha256(INI.encode()).hexdigest())
+        self.assert_all_put_back()
 
     def test_abba_session(self):
         result, fake, out = self.run_fake("on")

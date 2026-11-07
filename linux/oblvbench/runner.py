@@ -15,7 +15,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import detail, diagwin, envfile, fixini, game, mangohud, scenario, warmup
+from . import detail, diagwin, dllvariant, envfile, fixini, game, mangohud, scenario, warmup
 from .protocol import BenchError, Bridge, Deadline, GameDown, NeedsUser
 from .saves import SaveGuard
 from .ue4ss import Installer
@@ -63,6 +63,8 @@ class Options:
         self.steam = kw.get("steam") or "steam"
         self.run_dir = kw.get("run_dir")
         self.fix_ini = kw.get("fix_ini")                 # ["KEY=VAL,KEY=VAL", ...] for [Fixes], this run only
+        self.dll = kw.get("dll")                         # PE DLL installed as version.dll for this run only
+        self.dll_ini = kw.get("dll_ini")                 # ini installed with it (else the installed ini stays)
         self.env = kw.get("env")                         # ["KEY=VAL", ...] added to the launch environment
         self.detail = bool(kw.get("detail"))             # grab the window after door arrivals: time-to-sharp
         self.detail_secs = float(kw.get("detail_secs", 12))
@@ -210,7 +212,10 @@ class Runner:
             raise RuntimeError(f"game exe not found: {p.exe} (set OBLIVION_GAME_DIR)")
         if game.find_game_pid():
             raise RuntimeError("the game is running: close it first (the benchmark starts its own game)")
-        if fix_mode in ("on", "stock") and not p.fix_ini.exists():
+        dllvariant.check(o.dll, o.dll_ini)
+        if o.dll and fix_mode == "off":
+            raise RuntimeError("--dll with --fix off: the DLL would not be loaded")
+        if fix_mode in ("on", "stock") and not p.fix_ini.exists() and not o.dll_ini:
             raise RuntimeError(f"OblivionPerfFix.ini not found in {p.win64}: install the fix first (linux/README.md)")
         if not shutil.which(o.steam):
             raise RuntimeError(f"'{o.steam}' not on PATH")
@@ -239,6 +244,12 @@ class Runner:
             if not inst.manifest():
                 installed_here = True
             inst.install()
+            if o.dll:
+                self.result["dll"] = dllvariant.install(p, guard, o.dll, o.dll_ini)
+                self.say(f"dll for this run: {o.dll} sha256 {self.result['dll']['sha256'][:12]}")
+            elif (p.win64 / "version.dll").exists():
+                self.result["dll"] = {"path": str(p.win64 / "version.dll"), "installed": True,
+                                      "sha256": fixini.sha256(p.win64 / "version.dll")}
             if p.fix_ini.exists():
                 self.result["fixIniInstalled"] = fixini.fix_values(p.fix_ini.read_text(errors="replace"))
             if fix_mode == "stock":
