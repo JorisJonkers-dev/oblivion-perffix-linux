@@ -133,6 +133,74 @@ class MetricTest(unittest.TestCase):
         self.assertEqual(m.pix, bytes([5, 5]))
 
 
+def texture(w, h, seed=5):
+    """A structured picture (random rectangles and gradients) bigger than the registration's 64 px threshold."""
+    rnd = random.Random(seed)
+    pix = bytearray(w * h)
+    for y in range(h):
+        for x in range(w):
+            pix[y * w + x] = 90 + (x * 40 // w) + (y * 30 // h)
+    for _ in range(60):
+        x0, y0 = rnd.randrange(w - 10), rnd.randrange(h - 10)
+        bw, bh, v = rnd.randint(4, 30), rnd.randint(4, 30), rnd.randint(0, 255)
+        for y in range(y0, min(h, y0 + bh)):
+            pix[y * w + x0:y * w + min(w, x0 + bw)] = bytes([v]) * (min(w, x0 + bw) - x0)
+    return imgcmp.Pic(w, h, bytes(pix))
+
+
+def shifted(p, dx, dy):
+    """q(x + dx, y + dy) = p(x, y), the exposed border filled by edge replication."""
+    out = bytearray(p.w * p.h)
+    for y in range(p.h):
+        sy = min(p.h - 1, max(0, y - dy))
+        for x in range(p.w):
+            sx = min(p.w - 1, max(0, x - dx))
+            out[y * p.w + x] = p.pix[sy * p.w + sx]
+    return imgcmp.Pic(p.w, p.h, bytes(out))
+
+
+class RegistrationTest(unittest.TestCase):
+    def test_recovers_shift_with_noise(self):
+        a = texture(320, 180)
+        for dx, dy in ((7, -3), (-21, 5), (0, 0), (-13, 0), (24, -24)):
+            b = noisy(shifted(a, dx, dy), 12, seed=9)
+            r = imgcmp.register(a, noisy(a, 12, seed=4) if (dx, dy) == (0, 0) else b)
+            self.assertEqual((r["dx"], r["dy"]), (dx, dy), (dx, dy, r))
+            self.assertGreater(r["ncc"], 0.8)
+
+    def test_small_picture_and_masks(self):
+        a = scene()
+        r = imgcmp.register(a, shifted(a, 4, 2), masks=[(0.0, 0.0, 0.25, 0.15)])
+        self.assertEqual((r["dx"], r["dy"]), (4, 2))
+
+    def test_flat_pictures_do_not_crash(self):
+        flat = imgcmp.Pic(128, 72, bytes([100]) * (128 * 72))
+        r = imgcmp.register(flat, flat)
+        self.assertEqual((r["dx"], r["dy"], r["ncc"]), (0, 0, None))
+
+    def test_floor_is_one_after_registration(self):
+        a = texture(320, 180)
+        b = shifted(a, -11, 4)
+        raw = imgcmp.compare(a, b)
+        reg = imgcmp.compare_aligned(a, b, masks=[(0.0, 0.0, 0.25, 0.15)])
+        self.assertLess(raw["ssim"], 0.8)
+        self.assertGreater(reg["ssim"], 0.99)
+        self.assertEqual(reg["shift"], [-11, 4])
+        # with noise the registered SSIM is the noise's, the same as for unshifted pictures
+        n1 = imgcmp.compare_aligned(a, noisy(shifted(a, -11, 4), 6), masks=None)
+        n0 = imgcmp.compare(a, noisy(a, 6))
+        self.assertAlmostEqual(n1["ssim"], n0["ssim"], delta=0.05)
+
+    def test_align_crops_masks_and_mean_abs_diff(self):
+        a = texture(160, 90)
+        ca, cb, cm, info = imgcmp.align(a, shifted(a, 6, 0), masks=[(0.5, 0.5, 0.1, 0.1)])
+        self.assertEqual((ca.w, ca.h), (154, 90))
+        self.assertEqual(len(cm), 1)
+        self.assertAlmostEqual(cm[0][0], (0.5 * 160 - 0) / 154, places=6)
+        self.assertEqual(imgcmp.mean_abs_diff(ca, ca), 0)
+        self.assertGreater(imgcmp.mean_abs_diff(a, shifted(a, 6, 0)), 1)
+
+
 class GalleryTest(unittest.TestCase):
     def make_run(self, lod_amp):
         d = Path(tempfile.mkdtemp())
@@ -164,7 +232,65 @@ class GalleryTest(unittest.TestCase):
         self.assertIn("![lod 000](shots/sbs/lod/000.png)", md)
         self.assertIn("Noise floor", md)
         w, h, ch, _ = imgcmp.decode_png((d / "shots/sbs/lod/000.png").read_bytes())
-        self.assertEqual((w, ch), (W * 3 + 8, 3))
+        self.assertEqual(ch, 3)                      # registered pairs are cropped to their overlap
+        self.assertLessEqual(w, W * 3 + 8)
+        self.assertEqual((w - 8) % 3, 0)
+
+    def test_registered_floor_and_reshots(self):
+        """Shots of 'the same' view a few pixels apart: the as-captured floor is poor, the registered one ~1; reshots
+        recomputes a finished run into a new folder."""
+        import json
+        d = Path(tempfile.mkdtemp()) / "run"
+        base = texture(192, 108)
+        slots, i = [], 0
+        for name, wobble, lod in [("base", 0, 0), ("lod", 3, 1), ("lod", -4, 1), ("base", 5, 0), ("base", -6, 0), ("lod", 2, 1)]:
+            i += 1
+            shots = {}
+            for h in (0, 90):
+                p = shifted(base, wobble + h // 90, 0)
+                if lod:
+                    p = imgcmp.Pic(p.w, p.h, bytes((v * 3 // 4) if (x // 3 + y // 3) % 2 else v
+                                                   for y in range(p.h) for x, v in enumerate(p.pix[y * p.w:(y + 1) * p.w])))
+                rel = spinshots.shot_rel(name, i, h)
+                (d / rel).parent.mkdir(parents=True, exist_ok=True)
+                imgcmp.write_png(d / rel, p.w, p.h, p.pix)
+                shots[spinshots.heading_name(h)] = rel
+            slots.append({"variant": name, "shots": shots})
+        variants = spin.parse_variants(["lod:cvar:r.A=1"])
+        raw = spinshots.analyse(d, slots, variants, [], [0, 90], pairs=2, register=False)
+        reg = spinshots.analyse(d, slots, variants, [], [0, 90], pairs=2)
+        self.assertLess(raw["variants"]["base"]["noiseFloor"], 0.9)
+        self.assertGreater(reg["variants"]["base"]["noiseFloor"], 0.99)
+        self.assertLess(reg["variants"]["lod"]["ssim"], reg["variants"]["base"]["noiseFloor"] - 0.02)
+        self.assertEqual(reg["variants"]["base"]["noiseRegOk"], [4, 4])
+        self.assertIn("shift", reg["variants"]["lod"]["perHeading"]["000"])
+        self.assertIn("| shift |", (d / "images.md").read_text())
+        # reshots: a result.json of such a run -> new folder, original untouched
+        result = {"label": "spin-t", "time": "t", "scenario": "none", "outcome": "ok", "pinned": True, "profile": {"name": "own"},
+                  "slots": [{**s, "seconds": 1.0, "frames": 100} for s in slots],
+                  "variants": [{"name": "base", "kind": "base", "slots": 3, "slotFps": [], "sectorFps": [None] * 8,
+                                "sectorDeltaPct": [None] * 8, "deltaPct": {}, "noiseFloorPct": 5.0, "fps": 100, "hitches": 0},
+                               {"name": "lod", "kind": "cvar", "slots": 3, "slotFps": [], "sectorFps": [None] * 8,
+                                "sectorDeltaPct": [None] * 8, "deltaPct": {"fps": 12.0}, "noiseFloorPct": 5.0, "fps": 112, "hitches": 0}],
+                  "spin": {"spot": "x", "degPerSec": 30, "lapSec": 12, "pitch": 0, "laps": 1, "settle": 1, "camLag": 0.3,
+                           "order": [s["variant"] for s in slots], "thresholds": spin.THRESHOLDS,
+                           "variantSpecs": [v.spec() for v in variants],
+                           "shots": {"headings": [0.0, 90.0], "pairs": 2, "diffThresh": 24}}}
+        (d / "result.json").write_text(json.dumps(result))
+        before = (d / "result.json").read_bytes()
+        out = d.parent / "run-reshots"
+        r = spinshots.reshots(d, out, say=lambda m: None)
+        self.assertEqual((d / "result.json").read_bytes(), before)
+        self.assertFalse((d / "images.md").exists() and (d / "images.md").stat().st_mtime > out.stat().st_mtime + 5)
+        self.assertGreater(r["images"]["variants"]["base"]["noiseFloor"], 0.99)
+        self.assertTrue((out / "images.md").exists() and (out / "report.md").exists())
+        self.assertTrue((out / "shots/sbs/lod/000.png").exists())
+        v = {x["name"]: x for x in r["variants"]}["lod"]
+        self.assertIn(v["verdict"]["code"], ("TRADE-OFF", "REJECT"))
+        self.assertIn("## Gain vs image cost", (out / "report.md").read_text())
+        self.assertEqual(json.loads((out / "result.json").read_text())["reshots"]["from"], str(d))
+        with self.assertRaises(ValueError):
+            spinshots.reshots(d, d)
 
     def test_headings(self):
         self.assertEqual(spinshots.parse_headings("0, 45,359.5"), [0.0, 45.0, 359.5])

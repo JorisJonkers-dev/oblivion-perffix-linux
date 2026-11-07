@@ -183,7 +183,8 @@ def cmd_spin(a, paths):
                               "diff_thresh": a.diff_thresh, "turn_settle": a.turn_settle,
                               "turn_headings": spinshots.parse_headings(a.turn_headings) if a.turn_headings else None,
                               "turn_hold": a.turn_hold, "turn_from": a.turn_from, "turn_interval": a.turn_interval,
-                              "turn_secs": a.turn_secs, "turn_width": a.turn_width,
+                              "turn_secs": a.turn_secs, "turn_width": a.turn_width, "shot_still": a.shot_still,
+                              "shot_register": not a.no_register, "shot_search": a.reg_search,
                               "thresholds": {"ssimMaxDrop": a.ssim_max_drop, "gainFpsPct": a.gain_fps,
                                              "gainLowsPct": a.gain_lows, "gainHitchesPct": a.gain_hitches}})
         r = SpinRunner(paths, opts, say=say).run()
@@ -270,6 +271,21 @@ def cmd_ab(a, paths):
 def cmd_redetail(a, paths):
     for d, _ in write_redetail(load_runs(split_list(a.runs), paths.results), paths.results):
         say(f"REDETAIL {d}")
+
+
+def cmd_reshots(a, paths):
+    src = Path(a.run) if Path(a.run).is_dir() else paths.results / a.run
+    out = Path(a.out) if a.out else src.parent / (src.name + "-reshots")
+    try:
+        r = spinshots.reshots(src, out, a.shot_pairs, a.diff_thresh, register=not a.no_register, search=a.reg_search,
+                              thresholds={"ssimMaxDrop": a.ssim_max_drop}, say=say)
+    except (ValueError, OSError) as e:
+        raise SystemExit(f"reshots: {e}")
+    nf = ((r.get("images") or {}).get("variants") or {}).get((r["images"] or {}).get("base"), {}).get("noiseFloor")
+    say(f"RESHOTS {out / 'report.md'} (noise floor {nf})")
+    for row in r.get("variants") or []:
+        if row.get("verdict"):
+            say(f"  {row['name']}: {row['verdict']['code']} - {row['verdict']['text']}")
 
 
 def cmd_report(a, paths):
@@ -396,10 +412,21 @@ def main(argv=None):
     p.add_argument("--turn-secs", type=float, default=3.0, help="seconds captured after the snap (default 3)")
     p.add_argument("--turn-width", type=int, default=320, help="turn captures are block-averaged to about this width (default 320: faster grabs)")
     p.add_argument("--diff-thresh", type=int, default=24, help="luminance difference (0-255) that counts as a strongly different pixel (default 24)")
+    p.add_argument("--shot-still", type=float, default=1.0, help="a shot is taken when two consecutive grabs differ by at most this mean luminance (default 1.0)")
+    p.add_argument("--no-register", action="store_true", help="compare shots as captured, without estimating the shift between them")
+    p.add_argument("--reg-search", type=int, default=24, help="registration search range in pixels (default 24)")
     p.add_argument("--ssim-max-drop", type=float, default=0.015, help="COST when the SSIM drop beyond the noise floor exceeds this (default 0.015)")
     p.add_argument("--gain-fps", type=float, default=5.0, help="GAIN when avg fps rises by at least this %% (default 5)")
     p.add_argument("--gain-lows", type=float, default=10.0, help="GAIN when 1%% / 0.1%% low rises by at least this %% (default 10)")
     p.add_argument("--gain-hitches", type=float, default=25.0, help="GAIN when hitches fall by at least this %% (default 25)")
+    p = sub.add_parser("reshots", help="re-run the --shots image comparison (with registration) of a finished spin run into <run>-reshots")
+    p.add_argument("run", help="spin run folder or label")
+    p.add_argument("--out", help="output folder (default <run>-reshots next to it)")
+    p.add_argument("--shot-pairs", type=int, help="slot pairs per heading (default: as run)")
+    p.add_argument("--diff-thresh", type=int, help="strongly-different luminance threshold (default: as run)")
+    p.add_argument("--ssim-max-drop", type=float, help="COST threshold (default: as run)")
+    p.add_argument("--no-register", action="store_true", help="no registration (as the original comparison)")
+    p.add_argument("--reg-search", type=int, default=24, help="registration search range in pixels (default 24)")
     p = sub.add_parser("ab", help="alternate A and B in fresh games, then report")
     add_run_args(p)
     add_random_args(p)
@@ -436,7 +463,7 @@ def main(argv=None):
         signal.signal(sig, stop)
 
     handlers = {"setup": cmd_setup, "status": cmd_status, "restore": cmd_restore, "list": cmd_list, "run": cmd_run,
-                "ab": cmd_ab, "spin": cmd_spin, "report": cmd_report, "redetail": cmd_redetail,
+                "ab": cmd_ab, "spin": cmd_spin, "reshots": cmd_reshots, "report": cmd_report, "redetail": cmd_redetail,
                 "install-ue4ss": lambda a, p: installer(p).install(),
                 "remove-ue4ss": lambda a, p: installer(p).remove()}
     try:
