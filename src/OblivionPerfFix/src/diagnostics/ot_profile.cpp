@@ -517,6 +517,36 @@ bool IsFaultCode(DWORD c)
     }
 }
 
+// The std::string temporaries live in this helper, not inside the __try below: clang 21 crashes in the SEH table
+// emission (/EHa) when a __try body holds objects with destructors.
+__declspec(noinline) static int AppendWhere(char* line, int n, size_t cap, const GameModule& game, uint64_t rip)
+{
+    return n + snprintf(line + n, cap - n, " %s", Where(game, rip).c_str());
+}
+
+__declspec(noinline) static int StackText(EXCEPTION_POINTERS* ep, const GameModule& game, char* line, size_t cap, int n)
+{
+    __try {
+        CONTEXT ctx = *ep->ContextRecord;
+        for (int i = 0; i < 14 && ctx.Rip && n < 800; ++i) {
+            n = AppendWhere(line, n, cap, game, ctx.Rip);
+            DWORD64 base = 0;
+            PRUNTIME_FUNCTION fn = RtlLookupFunctionEntry(ctx.Rip, &base, nullptr);
+            if (!fn) {
+                ctx.Rip = *reinterpret_cast<DWORD64*>(ctx.Rsp);
+                ctx.Rsp += 8;
+            } else {
+                PVOID handler = nullptr;
+                DWORD64 frame = 0;
+                RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, ctx.Rip, fn, &ctx, &handler, &frame, nullptr);
+            }
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        n += snprintf(line + n, cap - n, " (stack unreadable)");
+    }
+    return n;
+}
+
 void LogContext(EXCEPTION_POINTERS* ep, bool stackOverflow)
 {
     const GameModule& game = Game();
@@ -557,24 +587,7 @@ void LogContext(EXCEPTION_POINTERS* ep, bool stackOverflow)
     Log("%s", line);
     // the call stack from the fault (the exe's .pdata)
     n = snprintf(line, sizeof line, "[otctx] stack:");
-    __try {
-        CONTEXT ctx = *ep->ContextRecord;
-        for (int i = 0; i < 14 && ctx.Rip && n < 800; ++i) {
-            n += snprintf(line + n, sizeof line - n, " %s", Where(game, ctx.Rip).c_str());
-            DWORD64 base = 0;
-            PRUNTIME_FUNCTION fn = RtlLookupFunctionEntry(ctx.Rip, &base, nullptr);
-            if (!fn) {
-                ctx.Rip = *reinterpret_cast<DWORD64*>(ctx.Rsp);
-                ctx.Rsp += 8;
-            } else {
-                PVOID handler = nullptr;
-                DWORD64 frame = 0;
-                RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, ctx.Rip, fn, &ctx, &handler, &frame, nullptr);
-            }
-        }
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        n += snprintf(line + n, sizeof line - n, " (stack unreadable)");
-    }
+    n = StackText(ep, game, line, sizeof line, n);
     Log("%s", line);
 }
 

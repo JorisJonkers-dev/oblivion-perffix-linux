@@ -78,7 +78,22 @@ void Cycle(uint64_t gap = 300)
     reinterpret_cast<uint64_t (*)(void*)>(g_runOt)(&g_mgr);
 }
 
-static void Run(const GameModule& game)
+static // Own function without C++ objects: clang 21 crashes emitting SEH tables for a __try next to objects with destructors.
+__declspec(noinline) static void RaiseProbe(bool* caught, bool* caughtOther)
+{
+    __try {
+        RaiseException(0xC0000005, 0, 0, nullptr);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        *caught = true;
+    }
+    __try {
+        RaiseException(0xE06D7363, 0, 0, nullptr);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        *caughtOther = true;
+    }
+}
+
+void Run(const GameModule& game)
 {
     Check(InstallOtProfile(true, L".", true, true, false, true), "OtProfile: installed on the mapped exe (profile and crash context)");
     OtProfileInfoOut i{};
@@ -198,16 +213,7 @@ static void Run(const GameModule& game)
     OtProfileInfoOut o0{};
     OtProfileInfo(&o0);
     bool caught = false, caughtOther = false;
-    __try {
-        RaiseException(0xC0000005, 0, 0, nullptr);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        caught = true;
-    }
-    __try {
-        RaiseException(0xE06D7363, 0, 0, nullptr);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        caughtOther = true;
-    }
+    RaiseProbe(&caught, &caughtOther);
     OtProfileInfoOut o1{};
     OtProfileInfo(&o1);
     Check(caught && caughtOther, "OtCrashContext: the exception still reaches the program's handler (never swallowed)");
