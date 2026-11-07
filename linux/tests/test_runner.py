@@ -1,6 +1,7 @@
 """A whole run against a fake game: Steam launch, process lookup and liveness are patched; a fake mod plays the
 main menu, the new game, the scene commands and the heartbeat; on `quit` it writes a MangoHud CSV whose frames
 include the sync markers' stalls. Checks the measured window, the log alignment and that everything is put back."""
+import hashlib
 import json
 import math
 import os
@@ -17,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fakemod import FakeMod  # noqa: E402
-from oblvbench import envfile, game, runner  # noqa: E402
+from oblvbench import dllvariant, envfile, fixini, game, runner  # noqa: E402
 from oblvbench.paths import Paths  # noqa: E402
 from test_fixini import SAMPLE  # noqa: E402
 
@@ -51,6 +52,7 @@ class FakeGame:
     def launch(self, steam="steam", args=()):
         self.env_at_launch = envfile.parse_env(self.paths.env_file)
         self.ini_at_launch = self.paths.fix_ini.read_bytes().decode()
+        self.dll_at_launch = (self.paths.win64 / "version.dll").read_bytes()
         Path(self.env_at_launch["OBLV_BENCH_MARKER"]).write_text("time=1\nWINEDLLOVERRIDES=x\n")
         self.running = True
         self.log_start = time.time() + 0.3
@@ -171,7 +173,7 @@ class RunnerTest(unittest.TestCase):
         self.env.stop()
         shutil.rmtree(self.tmp)
 
-    def run_fake(self, fix):
+    def run_fake(self, fix, **extra):
         run_dir = self.tmp / "results/run1"
         fake = FakeGame(self.paths, run_dir / "mangohud")
         pid = 4242
@@ -187,7 +189,7 @@ class RunnerTest(unittest.TestCase):
             p.start()
         try:
             opts = runner.Options(scenario="mini", scenario_dir=self.tmp / "scen", fix=fix, label="t", warmup=0,
-                                  steam="true", run_dir=run_dir, profile="small", launch_timeout=20)
+                                  steam="true", run_dir=run_dir, profile="small", launch_timeout=20, **extra)
             out = []
             result = runner.Runner(self.paths, opts, say=out.append).run()
         finally:
@@ -233,6 +235,83 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(fake.env_at_launch["WINEDLLOVERRIDES"], "version=b;dwmapi=n,b")
         self.assertEqual(fake.ini_at_launch, SAMPLE)
         self.assertEqual(result["outcome"], "ok", "\n".join(out))
+
+    def assert_all_restored(self):
+        after = {p: p.read_bytes() for p in self.tmp.rglob("*") if p.is_file()}
+        for p, data in self.before.items():
+            self.assertEqual(after.get(p), data, p)
+
+    def test_dll_installed_and_restored(self):
+        dll = self.tmp / "built/OblivionPerfFix.dll"
+        dll.parent.mkdir()
+        dll.write_bytes(b"MZ new build \x00\xff")
+        result, fake, out = self.run_fake("on", dll=dll)
+        self.assertEqual(result["outcome"], "ok", "\n".join(out))
+        self.assertEqual(fake.dll_at_launch, dll.read_bytes())
+        self.assertEqual(fake.ini_at_launch, SAMPLE)                 # the user's ini stays
+        self.assertEqual(result["dll"]["sha256"], hashlib.sha256(dll.read_bytes()).hexdigest())
+        self.assertEqual(json.loads((self.tmp / "results/run1/result.json").read_text())["dll"]["sha256"],
+                         result["dll"]["sha256"])
+        self.assert_all_restored()
+
+    def test_dll_and_ini_installed_and_restored(self):
+        dll, ini = self.tmp / "b.dll", self.tmp / "b.ini"
+        dll.write_bytes(b"dll2")
+        ini.write_bytes(SAMPLE.replace("BoneUploadStores=1", "BoneUploadStores=0").encode())
+        result, fake, out = self.run_fake("on", dll=dll, dll_ini=ini)
+        self.assertEqual(result["outcome"], "ok", "\n".join(out))
+        self.assertEqual(fake.dll_at_launch, b"dll2")
+        self.assertEqual(fake.ini_at_launch, ini.read_bytes().decode())
+        self.assertEqual(result["dll"]["iniSha256"], hashlib.sha256(ini.read_bytes()).hexdigest())
+        self.assert_all_restored()
+
+    def test_installed_dll_sha_recorded_without_dll_option(self):
+        result, fake, out = self.run_fake("on")
+        self.assertEqual(result["dll"]["sha256"], hashlib.sha256(b"fix").hexdigest())
+        self.assertTrue(result["dll"]["installed"])
+
+    def test_dll_missing_or_with_fix_off_refused_before_touching_anything(self):
+        for kw, fix in (({"dll": self.tmp / "nope.dll"}, "on"), ({"dll": self.tmp / "x.dll"}, "off"),
+                        ({"dll_ini": self.tmp / "x.ini"}, "on")):
+            (self.tmp / "x.dll").write_bytes(b"x")
+            result, fake, out = self.run_fake_expect_error(fix, **kw)
+        self.assert_all_restored()
+
+    def run_fake_expect_error(self, fix, **kw):
+        with self.assertRaises(RuntimeError):
+            self.run_fake(fix, **kw)
+        return None, None, None
+
+    def test_dll_restored_when_run_is_killed_half_way(self):
+        dll = self.tmp / "k.dll"
+        dll.write_bytes(b"killed build")
+        guard = fixini.FileGuard(self.paths.runtime)
+        dllvariant.install(self.paths, guard, dll, dll)             # as a run killed after installing
+        self.assertEqual((self.paths.win64 / "version.dll").read_bytes(), b"killed build")
+        self.assertTrue(guard.has_pending())
+        guard.restore()                                              # bench.py restore
+        self.assert_all_restored()
+
+
+class SideParseTest(unittest.TestCase):
+    def test_simple(self):
+        for s in ("on", "stock", "off"):
+            self.assertEqual(dllvariant.parse_side(s), (s, None, s))
+
+    def test_dll_variants(self):
+        d = Path(tempfile.mkdtemp())
+        try:
+            f = d / "a.dll"
+            f.write_bytes(b"abc")
+            sha8 = hashlib.sha256(b"abc").hexdigest()[:8]
+            self.assertEqual(dllvariant.parse_side(f"dll:{f}"), ("on", str(f), f"dll-{sha8}"))
+            self.assertEqual(dllvariant.parse_side(f"dll:{f}@stock"), ("stock", str(f), f"dll-{sha8}-stock"))
+            self.assertEqual(dllvariant.parse_side(f"dll:{f}@on")[:2], ("on", str(f)))
+            for bad in ("dll:", f"dll:{d}/missing.dll", "fix", "dll"):
+                with self.assertRaises(ValueError):
+                    dllvariant.parse_side(bad)
+        finally:
+            shutil.rmtree(d)
 
 
 if __name__ == "__main__":
