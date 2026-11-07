@@ -54,7 +54,17 @@ class SpinGame(FakeGame):
             self.cvar_calls.append((time.time(), k, v))
             return f"{k}={v}"
 
-        h.update(look=look, cvar=cvar, get=lambda m, r: f"{r}={self.cvars.get(r, 'nil')}")
+        self.cam_calls = []
+
+        def cam(m, rest):
+            self.cam_calls.append((time.time(), rest))
+            with self.lock:
+                last = self.looks[-1] if self.looks else None
+            if rest == "snap":
+                return "snap"
+            return "cam=on heading=%.1f pitch=%.1f" % ((last[2], last[3]) if last else (0, 0))
+
+        h.update(look=look, cam=cam, cvar=cvar, get=lambda m, r: f"{r}={self.cvars.get(r, 'nil')}")
         return h
 
 
@@ -195,6 +205,13 @@ class SpinTest(test_runner.RunnerTest):
             self.assertGreaterEqual(len(near), 3)
             self.assertTrue(all(abs(lk[2] - e["heading"]) < 0.01 for lk in near), (e, near[:2]))
         self.assertGreaterEqual(first[1]["t"] - first[0]["t"], 0.3)
+        # exact placement: a `cam snap` per shot, the read-back camera rotation and the stillness stored with it
+        self.assertGreaterEqual(len([c for c in fake.cam_calls if c[1] == "snap"]), len(log))
+        for e in log:
+            self.assertEqual(e["snaps"], 1)
+            self.assertAlmostEqual(e["camHeading"], e["heading"], delta=0.06)
+            self.assertAlmostEqual(e["camPitch"], 0.0, delta=0.06)
+            self.assertEqual(e["still"], 0.0)
         # fps windows were not disturbed: the lap stayed whole
         for s in result["slots"]:
             self.assertAlmostEqual(s["seconds"], 1.0, delta=0.01)

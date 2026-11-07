@@ -4,7 +4,12 @@ grayscale (luminance) `detail.Frame`-like objects: .w, .h and .pix (w*h bytes, r
 
 SSIM uses 8x8 box windows (slid `step` pixels at a time) built from running sums, so a 960x540 pair takes well under
 a second. Windows that touch a masked rectangle (HUD, MangoHud counter) are left out; PSNR and the big-difference
-share skip the masked pixels. Masks are rectangles (x, y, w, h) as fractions of the picture."""
+share skip the masked pixels. Masks are rectangles (x, y, w, h) as fractions of the picture.
+
+register() / align() estimate the translation between two pictures of the same view (normalised cross-correlation,
+coarse-to-fine) so that compare_aligned() judges the overlapping region instead of an edge-for-edge mismatch caused by
+a camera that is a few pixels off."""
+import math
 import struct
 import zlib
 from itertools import accumulate
@@ -253,6 +258,149 @@ def compare(a, b, masks=None, thresh=24, step=2):
     out = diff_stats(a, b, masks, thresh)
     s = ssim(a, b, masks, step)
     out["ssim"] = None if s is None else round(s, 5)
+    return out
+
+
+def mean_abs_diff(a, b):
+    """Mean |a - b| over all pixels (0 = identical): the 'is the picture still' measure of two grabs."""
+    _check(a, b)
+    return sum(abs(p - q) for p, q in zip(a.pix, b.pix)) / len(a.pix)
+
+
+# ---------------------------------------------------------------- registration
+
+def _fill_masks(p, masks):
+    """A copy of `p` with the masked rectangles set to the picture's mean (a static overlay must not pull the
+    correlation towards zero shift)."""
+    boxes = [rect_px(m, p.w, p.h) for m in masks or [] if len(m) == 4]
+    if not boxes:
+        return p
+    mean = int(sum(p.pix) / len(p.pix))
+    pix = bytearray(p.pix)
+    for a, b, c, d in boxes:
+        for y in range(c, d):
+            pix[y * p.w + a:y * p.w + b] = bytes([mean]) * (b - a)
+    return Pic(p.w, p.h, bytes(pix))
+
+
+def downscale(p, f):
+    """Block average by an integer factor (trailing partial blocks dropped)."""
+    if f == 1:
+        return p
+    w, h = p.w // f, p.h // f
+    out = bytearray()
+    div = f * f
+    for by in range(h):
+        acc = None
+        for y in range(by * f, by * f + f):
+            r = p.pix[y * p.w:y * p.w + w * f]
+            acc = list(r) if acc is None else list(map(add, acc, r))
+        out += bytes(sum(t) // div for t in zip(*(acc[k::f] for k in range(f))))
+    return Pic(w, h, bytes(out))
+
+
+class _Rows:
+    """Per row: the pixels plus prefix sums of value and value squared (O(1) window sums)."""
+
+    def __init__(self, p):
+        self.w, self.h = p.w, p.h
+        self.r = [p.pix[y * p.w:(y + 1) * p.w] for y in range(p.h)]
+        self.s = [[0, *accumulate(r)] for r in self.r]
+        self.q = [[0, *accumulate(map(mul, r, r))] for r in self.r]
+
+
+def _ncc(A, B, dx, dy, min_frac=0.5):
+    """Normalised cross-correlation of A(x, y) with B(x + dx, y + dy) over the overlap; None if the overlap is
+    under `min_frac` of the picture or has no variance."""
+    x0, x1 = max(0, -dx), min(A.w, A.w - dx)
+    y0, y1 = max(0, -dy), min(A.h, A.h - dy)
+    if x1 - x0 < A.w * min_frac or y1 - y0 < A.h * min_frac:
+        return None
+    sa = sb = saa = sbb = sab = 0
+    for y in range(y0, y1):
+        ra, rb = A.r[y], B.r[y + dy]
+        sa += A.s[y][x1] - A.s[y][x0]
+        saa += A.q[y][x1] - A.q[y][x0]
+        sb += B.s[y + dy][x1 + dx] - B.s[y + dy][x0 + dx]
+        sbb += B.q[y + dy][x1 + dx] - B.q[y + dy][x0 + dx]
+        sab += sum(map(mul, ra[x0:x1], rb[x0 + dx:x1 + dx]))
+    n = (x1 - x0) * (y1 - y0)
+    va = saa - sa * sa / n
+    vb = sbb - sb * sb / n
+    if va <= 1e-9 or vb <= 1e-9:
+        return None
+    return (sab - sa * sb / n) / math.sqrt(va * vb)
+
+
+def _search(A, B, cx, cy, rad):
+    """Best (ncc, dx, dy) with |dx - cx|, |dy - cy| <= rad; ties go to the smaller shift."""
+    best = None
+    cand = sorted(((dx, dy) for dy in range(cy - rad, cy + rad + 1) for dx in range(cx - rad, cx + rad + 1)),
+                  key=lambda t: (abs(t[0]) + abs(t[1]), t))
+    for dx, dy in cand:
+        v = _ncc(A, B, dx, dy)
+        if v is not None and (best is None or v > best[0] + 1e-12):
+            best = (v, dx, dy)
+    return best
+
+
+def register(a, b, masks=None, search=24):
+    """Translation (dx, dy) in pixels such that b(x + dx, y + dy) ~ a(x, y), found by normalised cross-correlation:
+    an integer search of +-`search` px on a picture downscaled by 4, refined on the half scale (+-1) and at full scale
+    (+-1; each finer level is searched around twice the coarser result, which pins it to within a pixel).
+    Masked areas are filled with the mean first. -> dict(dx, dy, ncc, atEdge); ncc None when the pictures have no
+    structure (shift 0 then)."""
+    _check(a, b)
+    a, b = _fill_masks(a, masks), _fill_masks(b, masks)
+    if min(a.w, a.h) >= 64:
+        levels = [(4, -(-search // 4)), (2, 1), (1, 1)]
+    else:
+        levels = [(1, search)]
+    cx = cy = 0
+    best = None
+    prev = None
+    for f, rad in levels:
+        if prev is not None:
+            cx, cy = cx * (prev // f), cy * (prev // f)
+        best = _search(_Rows(downscale(a, f)), _Rows(downscale(b, f)), cx, cy, rad)
+        if best is None:
+            return {"dx": 0, "dy": 0, "ncc": None, "atEdge": False}
+        cx, cy, prev = best[1], best[2], f
+    v, dx, dy = best
+    return {"dx": dx, "dy": dy, "ncc": round(v, 5), "atEdge": max(abs(dx), abs(dy)) >= search}
+
+
+def align(a, b, masks=None, search=24):
+    """Registers b to a and crops both to the overlap. -> (a', b', masks', info); info has dx, dy, ncc, atEdge.
+    Masks (fractions of a) are re-expressed for the cropped pictures."""
+    info = register(a, b, masks, search)
+    dx, dy = info["dx"], info["dy"]
+    if dx == 0 and dy == 0:
+        return a, b, masks, info
+    x0, x1 = max(0, -dx), min(a.w, a.w - dx)
+    y0, y1 = max(0, -dy), min(a.h, a.h - dy)
+    cw, ch = x1 - x0, y1 - y0
+    pa = b"".join(a.pix[y * a.w + x0:y * a.w + x1] for y in range(y0, y1))
+    pb = b"".join(b.pix[(y + dy) * b.w + x0 + dx:(y + dy) * b.w + x1 + dx] for y in range(y0, y1))
+    cm = []
+    for m in masks or []:
+        if len(m) != 4:
+            continue
+        mx, my, mw, mh = m
+        ax0, ax1 = mx * a.w - x0, (mx + mw) * a.w - x0
+        ay0, ay1 = my * a.h - y0, (my + mh) * a.h - y0
+        if ax1 <= 0 or ay1 <= 0 or ax0 >= cw or ay0 >= ch:
+            continue
+        cm.append((ax0 / cw, ay0 / ch, (ax1 - ax0) / cw, (ay1 - ay0) / ch))
+    return Pic(cw, ch, pa), Pic(cw, ch, pb), cm, info
+
+
+def compare_aligned(a, b, masks=None, thresh=24, step=2, search=24):
+    """compare() after registration: metrics of the overlapping region plus shift = [dx, dy] and ncc."""
+    ca, cb, cm, info = align(a, b, masks, search)
+    out = compare(ca, cb, cm, thresh, step)
+    out["shift"] = [info["dx"], info["dy"]]
+    out["ncc"] = info["ncc"]
     return out
 
 

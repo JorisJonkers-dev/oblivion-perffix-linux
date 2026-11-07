@@ -2,6 +2,7 @@
 order (see spin.py for the logic that needs no game). Reuses Runner for the start, the scene set-up and the
 clean-up; only the part between 'in the world' and 'quit' is its own."""
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -14,6 +15,9 @@ from .runner import Options, Runner
 
 SHIPPED_INI = REPO / "src" / "OblivionPerfFix" / "OblivionPerfFix.ini"
 INI_WAIT = 1.5              # the DLL re-reads its ini every second
+CAM_TOL = 0.3               # degrees the camera read-back may differ from the requested heading / pitch
+STILL_GAP = 0.15            # seconds between the two grabs that decide whether the picture is still
+CAM_RE = re.compile(r"heading=(-?[\d.]+) pitch=(-?[\d.]+)")
 
 
 class SpinOptions(Options):
@@ -38,6 +42,9 @@ class SpinOptions(Options):
         self.shot_settle = float(kw.get("shot_settle", 1.0))
         self.shot_width = int(kw.get("shot_width", 960))
         self.shot_pairs = int(kw.get("shot_pairs", 2))
+        self.shot_still = float(kw.get("shot_still", 1.0))        # max mean |difference| of two grabs to call it still
+        self.shot_register = bool(kw.get("shot_register", True))
+        self.shot_search = int(kw.get("shot_search", 24))
         self.shot_step = int(kw.get("shot_step", 2))
         self.diff_thresh = int(kw.get("diff_thresh", 24))
         self.diff_gain = int(kw.get("diff_gain", 4))
@@ -126,7 +133,7 @@ class SpinRunner(Runner):
     def estimate_seconds(self, scn, scenes):
         o = self.o
         lap = spin.lap_seconds(o.deg_per_sec)
-        shots = len(o.shot_headings) * (o.shot_settle + 0.6) if o.shots else 0
+        shots = len(o.shot_headings) * (o.shot_settle + 1.4) if o.shots else 0
         return len(self.order) * (o.settle + lap * (o.laps + 1) + 2 + shots) + 30
 
     def announce(self, scenes, estimate, fix_mode, limit_min):
@@ -225,26 +232,76 @@ class SpinRunner(Runner):
                              else detail.Capturer(target_w=self.o.shot_width))
         return self.shot_cap.grab()
 
+    def read_cam(self):
+        """(heading, pitch) of the mod's smoothed camera (`cam` verb), or None when it cannot be read."""
+        ans = self.send("cam", timeout=5, nothrow=True) or ""
+        m = CAM_RE.search(ans)
+        return (float(m.group(1)), float(m.group(2))) if m else None
+
+    def place_camera(self, h):
+        """Puts the camera exactly at heading h / the spin pitch: the control rotation is set (`look`), the mod's
+        camera is snapped onto it (`cam snap`: no smoothing lag, no residual drift) and the read-back checked; the
+        snap is repeated up to three times. -> (read-back (heading, pitch) or None, snaps sent)."""
+        o = self.o
+        got = None
+        for n in range(1, 4):
+            self.hold_heading(h, 0.2)
+            self.send("cam snap", timeout=5, nothrow=True)
+            self.hold_heading(h, 0.3)                       # the snap happens on the mod's next camera frame
+            got = self.read_cam()
+            if got is None:
+                return None, n
+            dh = abs((got[0] - h + 180.0) % 360.0 - 180.0)
+            if dh <= CAM_TOL and abs(got[1] - o.pitch) <= CAM_TOL:
+                return got, n
+        self.warn(f"shot heading {h:g}: camera reads {got[0]:.1f}/{got[1]:.1f} after 3 snaps")
+        return got, 3
+
+    def grab_still(self, h, tries=4):
+        """Grabs until two consecutive captures are nearly identical (mean |difference| <= --shot-still), holding
+        the heading meanwhile. -> (frame, mean difference, grabs)."""
+        prev = None
+        best = None
+        for n in range(1, tries + 2):
+            frame = self.grab_shot()
+            if prev is not None:
+                d = imgcmp.mean_abs_diff(prev, frame)
+                if best is None or d < best[1]:
+                    best = (frame, d, n)
+                if d <= self.o.shot_still:
+                    return frame, d, n
+            prev = frame
+            self.hold_heading(h, STILL_GAP)
+        return best if best else (prev, None, 1)
+
     def shot_lap(self, name, slot):
-        """After a measured slot: for each heading hold the camera still for --shot-settle s (temporal anti-aliasing
-        converges), grab the window and save shots/<variant>/s<slot>/<heading>.png. {heading name: rel path}."""
+        """After a measured slot: for each heading place the camera exactly (look + cam snap, read back), hold it for
+        --shot-settle s (temporal anti-aliasing converges), grab until the picture is still (two consecutive grabs
+        nearly identical) and save shots/<variant>/s<slot>/<heading>.png. The camera rotation read back from the mod
+        and the stillness go into the shot log. {heading name: rel path}."""
         o = self.o
         got = {}
         for h in o.shot_headings:
             hn = spinshots.heading_name(h)
             try:
+                cam, snaps = self.place_camera(h)
                 self.hold_heading(h, o.shot_settle)
+                frame, still, grabs = self.grab_still(h)
                 t = time.time()
-                frame = self.grab_shot()
                 if detail.mean_luma(frame) < detail.MIN_MEAN:
                     self.warn(f"shot {name} s{slot} {hn}: black picture")
                     continue
+                if still is None or still > o.shot_still:
+                    self.warn(f"shot {name} s{slot} {hn}: picture not still (difference {still if still is None else round(still, 2)})")
                 rel = spinshots.shot_rel(name, slot, h)
                 path = self.run_dir / rel
                 path.parent.mkdir(parents=True, exist_ok=True)
                 imgcmp.write_png(path, frame.w, frame.h, frame.pix)
                 got[hn] = rel
-                self.shot_log.append({"slot": slot, "variant": name, "heading": h, "t": round(t, 3)})
+                self.shot_log.append({"slot": slot, "variant": name, "heading": h, "t": round(t, 3),
+                                      "camHeading": None if cam is None else cam[0],
+                                      "camPitch": None if cam is None else cam[1], "snaps": snaps,
+                                      "still": None if still is None else round(still, 3), "grabs": grabs})
             except (detail.CaptureError, OSError, ValueError, subprocess.SubprocessError) as e:
                 self.warn(f"shot {name} s{slot} {hn}: {e}")
         self.say(f"shots {name} s{slot}: {len(got)}/{len(o.shot_headings)}")
@@ -321,11 +378,13 @@ class SpinRunner(Runner):
             "thresholds": o.thresholds}
         if o.shots:
             self.result["spin"]["shots"] = {"headings": o.shot_headings, "settle": o.shot_settle, "log": self.shot_log,
-                                            "pairs": o.shot_pairs, "diffThresh": o.diff_thresh}
+                                            "pairs": o.shot_pairs, "diffThresh": o.diff_thresh,
+                                            "still": o.shot_still, "register": o.shot_register,
+                                            "search": o.shot_search}
             try:
                 images = spinshots.analyse(run_dir, self.slots, o.variants, spinshots.all_masks(self.scn.get("masks")),
                                            o.shot_headings, o.shot_pairs, o.diff_thresh, o.shot_step, o.diff_gain,
-                                           say=self.warn)
+                                           say=self.warn, register=o.shot_register, search=o.shot_search)
                 self.result["images"] = images
                 spin.apply_images(self.result.get("variants") or [], images, o.thresholds)
             except Exception as e:

@@ -207,6 +207,18 @@ fixed headings (`--shot-headings`, default the eight sector centres 0,45,...,315
 so temporal anti-aliasing converges), grabs the game window (xdotool + xwd, like `--detail`, block-averaged to about
 `--shot-width` 960 px, luminance only) and saves `shots/<variant>/s<slot>/<heading>.png`. Needs `xdotool` and `xwd`.
 
+The camera is placed exactly: `look` sets the heading, `cam snap` puts the mod's smoothed camera onto it (no smoothing
+lag, no residual drift), the `cam` read-back is checked (within 0.3 degrees, snap repeated up to 3 times), and after the
+settle time grabs are repeated until two consecutive ones are nearly identical (`--shot-still`, mean luminance
+difference, default 1.0). The read-back rotation, snap count and stillness are stored per shot in `result.json`
+(`spin.shots.log`).
+
+Before comparing, each pair is registered: the translation between the two pictures is estimated (normalised
+cross-correlation, +-`--reg-search` 24 px, coarse-to-fine) and only the overlap is compared; the shift found and
+whether the registration is trustworthy (correlation >= 0.5 and not at the search limit) are reported in `images.md`.
+`--no-register` compares as captured. `bench.py reshots <spin run>` redoes the comparison of a finished run into
+`<run>-reshots` (original untouched), without the game.
+
 After the run each variant is compared with `base` at the same heading (slot k of the variant against slot k of base,
 `--shot-pairs` pairs per heading, median): SSIM (8x8 windows), PSNR and the share of pixels that differ by more than
 `--diff-thresh` (24/255). The MangoHud counter and the scenario's HUD masks are left out. The noise floor is `base`
