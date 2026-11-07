@@ -9,6 +9,7 @@ tools/Bench-Report.ps1. Standard library only. See linux/README.md.
   bench.py run --scenario showcase --fix stock --label s1
   bench.py ab --scenario showcase --rounds 2 --a stock --b on
   bench.py report --a s1,s2 --b f1,f2
+  bench.py spin --scenario linux-hotspots --scene cheydinhal-canal --variant off:ini:RdgParallelTranslate=0
 """
 import argparse
 import signal
@@ -18,11 +19,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from oblvbench import envfile, fixini, game, scenario, ue4ss  # noqa: E402
+from oblvbench import envfile, fixini, game, scenario, spin, ue4ss  # noqa: E402
 from oblvbench.paths import Paths  # noqa: E402
 from oblvbench.report import load_runs, write_comparison  # noqa: E402
 from oblvbench.runner import Options, Runner  # noqa: E402
 from oblvbench.saves import SaveGuard  # noqa: E402
+from oblvbench.spinrunner import SpinOptions, SpinRunner  # noqa: E402
 
 
 def say(msg):
@@ -41,14 +43,18 @@ def split_list(values):
     return out or None
 
 
-def run_options(a, **over):
+def run_kwargs(a, **over):
     kw = dict(scenario=a.scenario, scenes=split_list(a.scenes), tags=split_list(a.tags), start=a.start,
               label=a.label, fix=a.fix, profile=a.profile, warmup=a.warmup, keep_ue4ss=a.keep_ue4ss,
               show_hud=a.show_hud, pin=not a.no_pin, fixed_seed=not a.no_fixed_seed, native_res=a.native_res,
               stall_sec=a.stall_sec, max_minutes=a.max_minutes, launch_timeout=a.launch_timeout, steam=a.steam,
               fix_ini=a.fix_ini, env=a.env, diag=a.diag)
     kw.update(over)
-    return Options(**kw)
+    return kw
+
+
+def run_options(a, **over):
+    return Options(**run_kwargs(a, **over))
 
 
 def cmd_setup(a, paths):
@@ -100,6 +106,31 @@ def cmd_list(a, paths):
 
 def cmd_run(a, paths):
     r = Runner(paths, run_options(a), say=say).run()
+    return 0 if r["outcome"] == "ok" else (1 if r["outcome"] == "partial" else 2)
+
+
+def parse_pos(text):
+    try:
+        x, y, z = (float(v) for v in text.split(","))
+    except ValueError:
+        raise SystemExit(f"--pos expects x,y,z (numbers), got {text!r}")
+    return (x, y, z)
+
+
+def cmd_spin(a, paths):
+    if bool(a.scene) == bool(a.pos):
+        raise SystemExit("give either --scene ID (of --scenario) or --pos x,y,z --heading H --world/--cell NAME")
+    try:
+        variants = spin.parse_variants(a.variant)
+        opts = SpinOptions(**{**run_kwargs(a, label=f"spin-{a.label}", scenes=[a.scene] if a.scene else None, tags=None),
+                              "variants": variants, "rounds": a.rounds, "laps": a.laps, "settle": a.settle,
+                              "deg_per_sec": a.deg_per_sec, "pitch": a.pitch, "cam_lag": a.cam_lag,
+                              "look_interval": a.look_ms / 1000.0, "pos": parse_pos(a.pos) if a.pos else None,
+                              "heading": a.heading, "world": a.world, "cell": a.cell, "hour": a.hour,
+                              "weather": a.weather})
+        r = SpinRunner(paths, opts, say=say).run()
+    except spin.SpinError as e:
+        raise SystemExit(f"spin: {e}")
     return 0 if r["outcome"] == "ok" else (1 if r["outcome"] == "partial" else 2)
 
 
@@ -186,6 +217,26 @@ def main(argv=None):
     add_run_args(p)
     p.add_argument("--fix", choices=["on", "fix", "stock", "off"], default="on",
                    help="on/fix: the ini as installed; stock: every switch 0 but FrameRateLimitAtStart; off: DLL not loaded")
+    p = sub.add_parser("spin", help="one spot, camera spinning in laps, settings flipped live in ABBA order")
+    add_run_args(p)
+    p.set_defaults(scenario="linux-hotspots", warmup=20)
+    p.add_argument("--scene", help="a static scene of --scenario: its place, hour and weather")
+    p.add_argument("--pos", help="x,y,z instead of --scene (with --heading and --world or --cell)")
+    p.add_argument("--heading", type=float, help="start heading in degrees (0 = north, 90 = east); default: the scene's")
+    p.add_argument("--world", help="with --pos: the worldspace to teleport to (e.g. Tamriel)")
+    p.add_argument("--cell", help="with --pos: an interior cell to teleport to")
+    p.add_argument("--hour", help="with --pos (or to override the scene): game hour to pin")
+    p.add_argument("--weather", help="with --pos (or to override the scene): a weather name of the scenario (Clear...)")
+    p.add_argument("--deg-per-sec", type=float, default=30, help="turn rate (default 30 = 12 s per lap)")
+    p.add_argument("--pitch", type=float, default=0, help="camera pitch in degrees (default 0)")
+    p.add_argument("--variant", action="append", metavar="NAME:ini|cvar:K=V,...",
+                   help="a setting set to flip live, e.g. nopar:ini:RdgParallelTranslate=0 or lowlod:cvar:r.ViewDistanceScale=0.5 "
+                        "(repeatable; `base` = as installed is always the first)")
+    p.add_argument("--rounds", type=int, default=2, help="each round runs the variants forward then backward (default 2: A B B A A B B A)")
+    p.add_argument("--laps", type=int, default=2, help="full laps measured per slot (default 2)")
+    p.add_argument("--settle", type=float, default=4, help="seconds after a switch before the measured laps (default 4)")
+    p.add_argument("--cam-lag", type=float, default=0.3, help="seconds the smoothed camera trails the sent heading (default 0.3)")
+    p.add_argument("--look-ms", type=float, default=75, help="interval between heading updates sent to the game (default 75)")
     p = sub.add_parser("ab", help="alternate A and B in fresh games, then report")
     add_run_args(p)
     p.add_argument("--rounds", type=int, default=2)
@@ -210,7 +261,7 @@ def main(argv=None):
         signal.signal(sig, stop)
 
     handlers = {"setup": cmd_setup, "status": cmd_status, "restore": cmd_restore, "list": cmd_list, "run": cmd_run,
-                "ab": cmd_ab, "report": cmd_report,
+                "ab": cmd_ab, "spin": cmd_spin, "report": cmd_report,
                 "install-ue4ss": lambda a, p: installer(p).install(),
                 "remove-ue4ss": lambda a, p: installer(p).remove()}
     try:

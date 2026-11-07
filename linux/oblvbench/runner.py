@@ -178,6 +178,7 @@ class Runner:
         self.announce(scenes, estimate, fix_mode, limit_min)
 
         guard = fixini.FileGuard(p.runtime)
+        self.guard = guard
         saves = SaveGuard(p.saved / "SaveGames", p.runtime)
         inst = Installer(p.win64, p.runtime, p.ue4ss_src, game_running=lambda: bool(game.find_game_pid()),
                          say=lambda m: self.say(f"ue4ss: {m}"))
