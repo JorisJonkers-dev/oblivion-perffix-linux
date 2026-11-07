@@ -39,8 +39,14 @@ State as of the pause on 2026-11-07. Read this first, then [LOG.md](LOG.md) (new
    - check the replay failures, which should be 0.
    Then fps and hitches A/B on random spots, and decide whether `PsoRecordReplay=1` becomes the default.
 2. **Late pop-in and night lighting after turning** (owner priority):
-   - the turn-settle metric saturates at busy spots; branch `turn-settle2` fixes it (motion mask, 6 s window, faster
-     capture, frozen AI and time);
+   - the turn-settle metric saturates at busy spots. Branch `turn-settle2` (merged) only has the fast X11 capture
+     (`linux/oblvbench/xcap.py`: 21 ms per grab at a centre crop of 0.5, against 109 ms with xwd), and it is not wired
+     in yet. Still to do:
+     1. wire `xcap` into turns and shots (`--turn-crop` / `--shot-crop`);
+     2. a motion-masked settle;
+     3. a 6 s window with a 1 s tail, reporting ">X s" when not settled;
+     4. an AI-off pin during the laps (`obv tai` is a toggle; `freeze` may stop streaming);
+     5. calm test spots;
    - then A/B VT/streaming budgets (fewest missing regions so far), Lumen response, eye adaptation and Nanite at a calm
      spot and a night spot.
 3. **GPU per-pass profile**, to know where the 98% goes:
