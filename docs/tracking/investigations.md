@@ -5,7 +5,7 @@ Status: `open`, `running`, `done`, `parked`. Each finding goes into [LOG.md](LOG
 | # | Question | Status | Outcome | Write-up / evidence |
 |---|---|---|---|---|
 | 1 | Does OblivionPerfFix help or hurt on Linux at the player's settings? | done (round 1) | Mixed. Doors improve a lot. Town spots fall 6–25%, but the chapel-square drop doesn't repeat | [runs/20261107-093709-own-off-vs-on.md](runs/20261107-093709-own-off-vs-on.md), LOG 2026-11-07 |
-| 2 | Which fix group causes the town regression? | running | Bisect runs `cs-render-off`, `cs-npc-off`, `cs-phys-off` and `cs-keep-off` are running. The regression itself comes and goes, so more rounds are needed | [runs.md](runs.md) |
+| 2 | Which fix group causes the town regression? | running | Not one group. The slowdown is a CPU-bound episode (likely an NPC burst), worst with the NPC fixes off and not yet seen with the fix not loaded. `cs-ab3` is running | [runs.md](runs.md), LOG 2026-11-07 |
 | 3 | How do the old engine and UE5 work together (threads, the link between them, stalls)? | done | Each NPC is a FIFO queue of commands from the old engine to UE. The known stalls are listed with numbers | [altar-architecture.md](../research-linux/altar-architecture.md) |
 | 4 | Survey of existing perf mods, and their licences | done | Engine.ini packs are mostly placebo. Disabling Lumen is excluded by the owner. Streaming-pool sizing is a lead | [mods-survey.md](../research-linux/mods-survey.md) |
 | 5 | Proton input latency and streaming | done | Leads: ntfs-3g IO, vkd3d low-latency (Proton-CachyOS), GPU headroom, `no_upload_hvv`. All need A/B | [proton-latency-streaming.md](../research-linux/proton-latency-streaming.md) |

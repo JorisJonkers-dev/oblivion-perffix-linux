@@ -5,6 +5,33 @@ Investigations: [investigations.md](investigations.md).
 
 ## 2026-11-07
 
+### Chapel square: the slowdown comes in episodes where the CPU spikes and the GPU waits
+At Cheydinhal's chapel square, some runs fall into a mode where the CPU is the limit, with many hitches. The fix-group
+runs show this is an episode, not a constant cost of one fix group.
+
+| Run | fps | Hitches | CPU / GPU |
+|---|---|---|---|
+| Fix not loaded (2 runs) | 94 | 0 | 56% / 97% |
+| Fix on, round 1 | 87 | 0 | 54% / 98% |
+| **Fix on, round 2** | **53** | **36** | **81% / 79%** |
+| Fix on, diag run | 76.5 | 0 | 56% / 98% |
+| Render-threading fixes off | 79 | 0 | 52% / 98% |
+| **NPC fixes off** | **42** | **146** | **82% / 69%** |
+| Physics fixes off | 83 | 0 | 59% / 95% |
+
+- Hypothesis: a burst of NPC creation or AI work at the square. It was worst with the NPC fixes off, and so far it has
+  never happened with the fix not loaded (2 of 2 runs).
+- Confidence: low (single runs). A follow-up is running: `cs-ab3`, 3 balanced rounds with `--diag`.
+
+### MangoHud can write a garbage frametime
+One row in `cs-keep-off` held 37,337,300 ms, which broke that run's stats (it showed 0 fps). The parser now replaces any
+frametime longer than 2 × the row gap + 50 ms with the gap. `cs-keep-off` needs a rerun.
+
+### Benchmarks run from their own worktree
+Chains now run from `~/Projects/opf-run`, a detached worktree whose `linux/results` and `linux/third_party` are symlinks
+to the main checkout. Agents working on branches can no longer change code under a running benchmark.
+
+
 ### Process: give each agent its own git worktree
 Several agents shared one checkout and switched branches in it, while benchmark chains ran code from that same
 checkout. Rule from now on:
