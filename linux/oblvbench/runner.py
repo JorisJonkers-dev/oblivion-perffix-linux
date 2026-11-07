@@ -290,7 +290,7 @@ class Runner:
             self.cleanup(guard, saves, inst, installed_here)
             watcher.stop()
         self.analyse(mh_dir, watcher)
-        if o.diag and fix_mode != "off":
+        if (o.diag or fixini.parse_overrides(o.fix_ini).get("OsPageCacheTrace", "0") not in ("0", "")) and fix_mode != "off":
             self.collect_diag(run_dir, p.win64, diag_since if "diag_since" in locals() else 0)
         self.result["outcome"] = self.outcome_of(outcome)
         self.result["warnings"] = self.warnings

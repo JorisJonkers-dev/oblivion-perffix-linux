@@ -5055,8 +5055,9 @@ int wmain(int argc, wchar_t** argv)
                   !SharedMemoryGpuWanted(2, GpuMemoryKind::Shared, true, 16 * 1024) &&
                   !SharedMemoryGpuWanted(2, GpuMemoryKind::Dedicated, false, 16 * 1024),
               "SharedMemoryGpu=2: a 16 GB handheld yes; a 24 GB Ally X, a 32 GB APU, Wine with SharedMemoryGpuWine=0, a graphics card no");
-        Check(Config().sharedMemoryGpuWine && Config().psoColdGuardWine && Config().osPageCacheKeepMs == 0,
-              "defaults: SharedMemoryGpuWine=1, PsoColdGuardWine=1, OsPageCacheKeepMs=0 (the seconds key)");
+        Check(Config().sharedMemoryGpuWine && Config().psoColdGuardWine && Config().osPageCacheKeepMs == 0 &&
+                  Config().osPageCacheTrace == 0 && Config().osPageCacheTraceMB == 64,
+              "defaults: SharedMemoryGpuWine=1, PsoColdGuardWine=1, OsPageCacheKeepMs=0 (the seconds key), OsPageCacheTrace=0 (64 MB)");
         const SharedGpuHost host = SharedGpuHostFacts();
         if (IsWine()) {
             printf("SKIP  SharedMemoryGpu: this PC is Windows itself (no wine_get_version): not asserted under Wine/Proton\n");

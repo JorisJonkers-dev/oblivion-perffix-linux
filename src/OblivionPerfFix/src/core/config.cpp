@@ -119,6 +119,8 @@ Config LoadConfig(const wchar_t* iniPath)
     c.osPageCacheMB = get(L"Fixes", L"OsPageCacheMB", c.osPageCacheMB);
     c.osPageCacheTrimSeconds = get(L"Fixes", L"OsPageCacheTrimSeconds", c.osPageCacheTrimSeconds);
     c.osPageCacheKeepMs = get(L"Fixes", L"OsPageCacheKeepMs", c.osPageCacheKeepMs);
+    c.osPageCacheTrace = get(L"Fixes", L"OsPageCacheTrace", c.osPageCacheTrace);
+    c.osPageCacheTraceMB = get(L"Fixes", L"OsPageCacheTraceMB", c.osPageCacheTraceMB);
     c.psoColdGuardWine = get(L"Fixes", L"PsoColdGuardWine", c.psoColdGuardWine) != 0;
     c.sharedMemoryGpuWine = get(L"Fixes", L"SharedMemoryGpuWine", c.sharedMemoryGpuWine) != 0;
     c.psoPrecompileFast = get(L"Fixes", L"PsoPrecompileFast", c.psoPrecompileFast) != 0;

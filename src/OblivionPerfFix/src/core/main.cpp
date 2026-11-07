@@ -5,6 +5,7 @@
 // If both are installed, only the first one to load applies the fixes.
 #include "common.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cwchar>
 #include <string>
@@ -217,7 +218,7 @@ DWORD WINAPI MonitorThread(LPVOID)
         SetRtSceneKeep(relief.shared && cfg.rtSceneBufferKeep ? 2 : cfg.rtSceneBufferKeep);  // RtSceneBufferKeep: live once installed (no-op otherwise); 2 = the game's way
         SetRayTracingBuildBatch(cfg.rayTracingBuildBatch);  // RayTracingBuildBatch: live once installed (no-op otherwise)
         SetOsPageCache(relief.shared ? 0 : cfg.osPageCache, cfg.osPageCacheMB, cfg.osPageCacheTrimSeconds, relief.osCache,
-                       cfg.osPageCacheKeepMs);  // OsPageCache: no-op unless installed
+                       cfg.osPageCacheKeepMs, cfg.osPageCacheTrace ? (std::clamp)(cfg.osPageCacheTraceMB, 4, 1024) : 0);  // OsPageCache: no-op unless installed
         SetPsoPrecompileFast(cfg.psoPrecompileFast);  // PsoPrecompileFast: no-op unless installed at start-up
         SetPsoPrecompileFastInGameMenus(cfg.psoPrecompileFastInGameMenus);
         SetPsoPrecompileFastBudget(static_cast<float>(cfg.psoPrecompileFastBudgetMs < 1 ? 1 : cfg.psoPrecompileFastBudgetMs),
@@ -507,10 +508,10 @@ void Init(const char* loadedVia, bool proxyOk, bool beforeGameCode)
         if (ApplyReadbackConvertFix(beforeGameCode)) SetReadbackConvertMode(cfg.screenshotReadbackConvert);
     } else Log("[readback] disabled in OblivionPerfFix.ini (takes a restart to switch on)");
     // OsPageCache: installed only if enabled at startup (the lab trace installs it too); afterwards the ini switches it live.
-    const int osTrace = 0;
+    const int osTrace = cfg.osPageCacheTrace ? (std::clamp)(cfg.osPageCacheTraceMB, 4, 1024) : 0;
     if (cfg.osPageCache || osTrace) {
         if (InstallOsPageCache(beforeGameCode, Directory(g_iniPath).c_str(), osTrace))
-            SetOsPageCache(cfg.osPageCache, cfg.osPageCacheMB, cfg.osPageCacheTrimSeconds, false, cfg.osPageCacheKeepMs);
+            SetOsPageCache(cfg.osPageCache, cfg.osPageCacheMB, cfg.osPageCacheTrimSeconds, false, cfg.osPageCacheKeepMs, osTrace);
     } else Log("[oscache] disabled in OblivionPerfFix.ini (takes a restart to switch on)");
     // PsoPrecompileFast: SetBatchMode's entry detour, installed only if enabled at startup; afterwards the ini switches it live.
     if (cfg.psoPrecompileFast) {
