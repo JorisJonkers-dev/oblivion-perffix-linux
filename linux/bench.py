@@ -20,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from oblvbench import dllvariant, envfile, fixini, game, scenario, spin, ue4ss  # noqa: E402
+from oblvbench import dllvariant, envfile, fixini, game, scenario, spin, spinshots, ue4ss  # noqa: E402
 from oblvbench.paths import Paths  # noqa: E402
 from oblvbench.report import load_runs, redetail_runs, write_comparison, write_redetail  # noqa: E402
 from oblvbench.runner import Options, Runner  # noqa: E402
@@ -125,14 +125,19 @@ def cmd_spin(a, paths):
         raise SystemExit("give either --scene ID (of --scenario) or --pos x,y,z --heading H --world/--cell NAME")
     try:
         variants = spin.parse_variants(a.variant)
+        shot_headings = spinshots.parse_headings(a.shot_headings) if a.shot_headings else None
         opts = SpinOptions(**{**run_kwargs(a, label=f"spin-{a.label}", scenes=[a.scene] if a.scene else None, tags=None),
                               "variants": variants, "rounds": a.rounds, "laps": a.laps, "settle": a.settle,
                               "deg_per_sec": a.deg_per_sec, "pitch": a.pitch, "cam_lag": a.cam_lag,
                               "look_interval": a.look_ms / 1000.0, "pos": parse_pos(a.pos) if a.pos else None,
                               "heading": a.heading, "world": a.world, "cell": a.cell, "hour": a.hour,
-                              "weather": a.weather})
+                              "weather": a.weather, "shots": a.shots, "shot_headings": shot_headings,
+                              "shot_settle": a.shot_settle, "shot_width": a.shot_width, "shot_pairs": a.shot_pairs,
+                              "diff_thresh": a.diff_thresh,
+                              "thresholds": {"ssimMaxDrop": a.ssim_max_drop, "gainFpsPct": a.gain_fps,
+                                             "gainLowsPct": a.gain_lows, "gainHitchesPct": a.gain_hitches}})
         r = SpinRunner(paths, opts, say=say).run()
-    except spin.SpinError as e:
+    except (spin.SpinError, ValueError) as e:
         raise SystemExit(f"spin: {e}")
     return 0 if r["outcome"] == "ok" else (1 if r["outcome"] == "partial" else 2)
 
@@ -292,6 +297,18 @@ def main(argv=None):
     p.add_argument("--settle", type=float, default=4, help="seconds after a switch before the measured laps (default 4)")
     p.add_argument("--cam-lag", type=float, default=0.3, help="seconds the smoothed camera trails the sent heading (default 0.3)")
     p.add_argument("--look-ms", type=float, default=75, help="interval between heading updates sent to the game (default 75)")
+    p.add_argument("--shots", action="store_true",
+                   help="after every slot, grab the window at fixed headings (camera held still) and compare each variant with base: "
+                        "SSIM against the base-vs-base noise floor, side-by-side pictures, images.md, a GAIN/COST verdict")
+    p.add_argument("--shot-headings", metavar="H,H,...", help="headings to capture (default: the 8 sector centres 0,45,...,315)")
+    p.add_argument("--shot-settle", type=float, default=1.0, help="seconds the camera holds a heading before the grab (default 1.0)")
+    p.add_argument("--shot-width", type=int, default=960, help="capture is block-averaged to about this width (default 960)")
+    p.add_argument("--shot-pairs", type=int, default=2, help="slot pairs compared per heading (default 2; more = slower, steadier)")
+    p.add_argument("--diff-thresh", type=int, default=24, help="luminance difference (0-255) that counts as a strongly different pixel (default 24)")
+    p.add_argument("--ssim-max-drop", type=float, default=0.015, help="COST when the SSIM drop beyond the noise floor exceeds this (default 0.015)")
+    p.add_argument("--gain-fps", type=float, default=5.0, help="GAIN when avg fps rises by at least this %% (default 5)")
+    p.add_argument("--gain-lows", type=float, default=10.0, help="GAIN when 1%% / 0.1%% low rises by at least this %% (default 10)")
+    p.add_argument("--gain-hitches", type=float, default=25.0, help="GAIN when hitches fall by at least this %% (default 25)")
     p = sub.add_parser("ab", help="alternate A and B in fresh games, then report")
     add_run_args(p)
     p.add_argument("--rounds", type=int, default=2)

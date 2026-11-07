@@ -25,6 +25,11 @@ METRICS = [  # key, title, format, higher is better
 ]
 
 
+# --shots verdicts (all overridable: --ssim-max-drop, --gain-fps, --gain-lows, --gain-hitches)
+THRESHOLDS = {"ssimMaxDrop": 0.015, "gainFpsPct": 5.0, "gainLowsPct": 10.0, "gainHitchesPct": 25.0}
+MIN_HITCH_DIFF = 3                  # fewer hitches counts only when it is at least this many fewer
+
+
 class SpinError(ValueError):
     pass
 
@@ -292,6 +297,52 @@ def summarise(slots, variants):
     return out
 
 
+def verdict(row, base, th=None):
+    """GAIN (fps / lows / hitches clearly better than base) against COST (SSIM drop beyond the base-vs-base noise floor).
+    A gain counts when it is at least the threshold and larger than the slot-to-slot fps spread of the two variants;
+    a hitch gain when hitches fall by `gainHitchesPct` % and by at least MIN_HITCH_DIFF. A cost is a mean SSIM drop
+    (noise floor - variant SSIM, per heading, averaged) above `ssimMaxDrop`. Returns (code, text)."""
+    th = {**THRESHOLDS, **(th or {})}
+    d = row.get("deltaPct") or {}
+    spread = max([x for x in (row.get("spreadPct"), (base or {}).get("spreadPct")) if x is not None] or [0.0])
+    gains = []
+    fps = d.get("fps")
+    if fps is not None and fps >= max(th["gainFpsPct"], spread):
+        gains.append(f"fps {fps:+.1f} %")
+    for key, title in (("low1", "1% low"), ("low01", "0.1% low")):
+        v = d.get(key)
+        if v is not None and v >= max(th["gainLowsPct"], spread):
+            gains.append(f"{title} {v:+.1f} %")
+    h, hb = row.get("hitches"), (base or {}).get("hitches")
+    if h is not None and hb and hb - h >= MIN_HITCH_DIFF and 100.0 * (hb - h) / hb >= th["gainHitchesPct"]:
+        gains.append(f"hitches {hb:.0f} -> {h:.0f}")
+    worse = fps is not None and fps <= -max(th["gainFpsPct"], spread)
+    im = row.get("ssim")
+    if not im or im.get("drop") is None:
+        cost, ctext = None, "no SSIM (run with --shots)"
+    else:
+        cost = im["drop"] > th["ssimMaxDrop"]
+        ctext = (f"SSIM drop {im['drop']:+.4f} vs floor (SSIM {im['ssim']:.4f}, floor "
+                 f"{'?' if im.get('noiseFloor') is None else format(im['noiseFloor'], '.4f')}; limit {th['ssimMaxDrop']:g})")
+    gtext = ", ".join(gains) if gains else ("fps WORSE" if worse else "no clear gain")
+    if cost is None:
+        return "NO-IMAGES", f"GAIN: {gtext}; COST: {ctext}"
+    code = ("TRADE-OFF" if gains else "REJECT") if cost else ("ACCEPT" if gains else "NEUTRAL")
+    return code, f"GAIN: {gtext}; COST: {ctext}"
+
+
+def apply_images(rows, images, th=None):
+    """Merges the image comparison (spinshots.analyse) into the summarise() rows and sets row['verdict']."""
+    iv = (images or {}).get("variants") or {}
+    for row in rows:
+        im = iv.get(row["name"])
+        if im:
+            row["ssim"] = im
+    for row in rows[1:]:
+        code, text = verdict(row, rows[0], th)
+        row["verdict"] = {"code": code, "text": text}
+
+
 def _f(fmt, v):
     return "-" if v is None else fmt.format(v)
 
@@ -315,11 +366,20 @@ def report_markdown(result):
            f"- frames: MangoHud (Proton); {_timing(r.get('frameLog'))}", ""]
     rows = r.get("variants") or []
     if rows:
-        out.append("| variant | kind | slots | " + " | ".join(m[1] for m in METRICS) + " |")
-        out.append("|---|---|---:|" + "---:|" * len(METRICS))
+        shots = any(row.get("ssim") for row in rows)
+        out.append("| variant | kind | slots | " + " | ".join(m[1] for m in METRICS) + (" | SSIM vs base (noise floor) |" if shots else " |"))
+        out.append("|---|---|---:|" + "---:|" * len(METRICS) + ("---:|" if shots else ""))
         for row in rows:
             cells = [_f(f, row.get(k)) + (_delta(row, k) if row is not rows[0] and k not in ("gpuLoad", "cpuLoad") else "")
                      for k, _, f, _ in METRICS]
+            if shots:
+                im = row.get("ssim") or {}
+                if row is rows[0]:
+                    cells.append("-" if im.get("noiseFloor") is None else f"(floor {im['noiseFloor']:.4f})")
+                elif im.get("ssim") is None:
+                    cells.append("-")
+                else:
+                    cells.append(f"{im['ssim']:.4f} (floor {_f('{:.4f}', im.get('noiseFloor'))})")
             out.append(f"| {row['name']} | {row['kind']} | {row['slots']} | " + " | ".join(cells) + " |")
         out += ["", f"Each cell: median over the variant's slots; the change is against `{rows[0]['name']}`, `~` = under "
                 f"the larger of {NOISE_PCT:.0f} % and the slot-to-slot spread of the two.", "",
@@ -339,6 +399,30 @@ def report_markdown(result):
                 d = row["sectorDeltaPct"][i]
                 cells.append(_f("{:.1f}", x) + ("" if row is rows[0] or d is None else f" ({d:+.0f}%)"))
             out.append(f"| {row['name']} | " + " | ".join(cells) + f" | {sector_label(worst) if worst is not None else '-'} |")
+    if any(row.get("verdict") for row in rows):
+        th = sp.get("thresholds") or THRESHOLDS
+        out += ["", "## Gain vs image cost", ""]
+        for row in rows[1:]:
+            v = row.get("verdict")
+            if v:
+                out.append(f"- **{row['name']}: {v['code']}** - {v['text']}")
+        im0 = (rows[0].get("ssim") or {})
+        out += ["", f"Thresholds: GAIN = avg fps up by >= {th['gainFpsPct']:g} % (and more than the slot-to-slot spread), or "
+                f"1% / 0.1% low up >= {th['gainLowsPct']:g} %, or hitches down >= {th['gainHitchesPct']:g} % (and by >= "
+                f"{MIN_HITCH_DIFF}). COST = mean SSIM drop beyond the base-vs-base noise floor > {th['ssimMaxDrop']:g} "
+                "(SSIM of the luminance, 8x8 windows, HUD / overlay masked, same camera heading). ACCEPT = gain without cost, "
+                "TRADE-OFF = gain with cost (the owner decides: look at the pictures), REJECT = cost without gain, "
+                "NEUTRAL = neither.", "",
+                "| variant | mean SSIM | floor | drop | worst heading | PSNR dB | pixels strongly different |",
+                "|---|---:|---:|---:|---|---:|---:|"]
+        for row in rows[1:]:
+            im = row.get("ssim") or {}
+            if im.get("ssim") is not None:
+                out.append(f"| {row['name']} | {im['ssim']:.4f} | {_f('{:.4f}', im.get('noiseFloor'))} | {im['drop']:+.4f} | "
+                           f"{im.get('worst')} | {_f('{:.1f}', im.get('psnr'))} | {_f('{:.2f}', im.get('bigPct'))} % |")
+        if im0.get("noiseFloor") is None:
+            out += ["", "No noise floor: the base has fewer than two slots with pictures, so the drop is measured against 1.0."]
+        out += ["", "Side-by-side pictures (base | variant | difference): [images.md](images.md)."]
     if r.get("slots"):
         out += ["", "## Slots", "", "| # | variant | s | frames | avg fps | 1% low | hitches | lap fps |", "|---:|---|---:|---:|---:|---:|---:|---|"]
         for i, s in enumerate(r["slots"], 1):

@@ -155,6 +155,71 @@ class SpinTest(test_runner.RunnerTest):
         self.assertGreater(len(json.loads((d / "heading-timeline.json").read_text())), 50)
         self.assert_all_put_back()
 
+    def test_shot_laps(self):
+        game = self
+        W, H = 160, 90
+
+        class Cap:
+            def grab(self):
+                g = game.game
+                with g.lock:
+                    h = g.looks[-1][2]
+                lod = g.cvars["r.Foo"] == "2"
+                pix = bytearray()
+                for y in range(H):
+                    for x in range(W):
+                        v = (x * 2 + y + int(h)) % 180 + 40
+                        if lod:
+                            v = min(255, v + ((x * 7 + y * 13) % 31))      # a visible change in the lod slots
+                        pix.append(v)
+                return spin_frame(W, H, bytes(pix))
+
+        from oblvbench.imgcmp import Pic as spin_frame
+        result, fake, out = self.run_fake("on", shots=True, shot_headings=[0, 90, 200], shot_settle=0.3,
+                                          capturer_factory=Cap)
+        self.assertEqual(result["outcome"], "ok", "\n".join(out))
+        d = self.tmp / "results/run1"
+        for i, s in enumerate(result["slots"], 1):
+            self.assertEqual(sorted(s["shots"]), ["000", "090", "200"])
+            self.assertEqual(s["shots"]["090"], f"shots/{s['variant']}/s{i}/090.png")
+            self.assertTrue((d / s["shots"]["090"]).exists())
+        # the shot lap comes after the measured laps, holds each heading for the settle time and sends exactly it
+        log = result["spin"]["shots"]["log"]
+        self.assertEqual(len(log), 3 * len(result["slots"]))
+        s1 = result["slots"][0]
+        first = [e for e in log if e["slot"] == 1]
+        self.assertEqual([e["heading"] for e in first], [0, 90, 200])
+        self.assertGreaterEqual(first[0]["t"], s1["t1"] + 0.3 - 0.05)
+        for e in first:
+            near = [lk for lk in fake.looks if e["t"] - 0.3 <= lk[0] <= e["t"]]
+            self.assertGreaterEqual(len(near), 3)
+            self.assertTrue(all(abs(lk[2] - e["heading"]) < 0.01 for lk in near), (e, near[:2]))
+        self.assertGreaterEqual(first[1]["t"] - first[0]["t"], 0.3)
+        # fps windows were not disturbed: the lap stayed whole
+        for s in result["slots"]:
+            self.assertAlmostEqual(s["seconds"], 1.0, delta=0.01)
+        # comparison: lod differs from base beyond the floor, off (ini only) does not
+        im = result["images"]
+        self.assertAlmostEqual(im["variants"]["base"]["noiseFloor"], 1.0, places=3)
+        self.assertLess(im["variants"]["lod"]["ssim"], 0.97)
+        self.assertGreater(im["variants"]["off"]["ssim"], 0.999)
+        rows = {v["name"]: v for v in result["variants"]}
+        self.assertIn(rows["lod"]["verdict"]["code"], ("REJECT", "TRADE-OFF"))
+        self.assertIn(rows["off"]["verdict"]["code"], ("NEUTRAL", "ACCEPT"))             # no image cost
+        md = (d / "report.md").read_text()
+        self.assertIn("SSIM vs base (noise floor)", md)
+        self.assertIn("## Gain vs image cost", md)
+        gal = (d / "images.md").read_text()
+        self.assertIn("![lod 090](shots/sbs/lod/090.png)", gal)
+        self.assertTrue((d / "shots/sbs/lod/090.png").exists())
+        self.assert_all_put_back()
+
+    def test_no_shots_by_default(self):
+        result, fake, out = self.run_fake("on")
+        self.assertNotIn("images", result)
+        self.assertFalse((self.tmp / "results/run1/shots").exists())
+        self.assertNotIn("SSIM", (self.tmp / "results/run1/report.md").read_text())
+
     def test_error_in_a_cvar_slot_puts_cvar_back(self):
         SpinTest.fail_mode = "cvar"
         try:
