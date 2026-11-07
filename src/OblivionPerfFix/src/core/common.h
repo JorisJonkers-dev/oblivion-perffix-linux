@@ -218,6 +218,8 @@ struct Config {
                                          // handed out again for its own cache misses (identical; start-up install, then live)
     int osPageCacheMB = 64;              // OsPageCacheMB: OsPageCache's cap (MB, 4-1024)
     int osPageCacheTrimSeconds = 5;      // not in the shipped ini: OsPageCache releases blocks unused this long (s); OsPageCacheKeepMs wins
+    int osPageCacheTrace = 0;            // OsPageCacheTrace: record every alloc / free the cache sees into OblivionPerfFix-oscache-trace.bin (tools/oscache_sim.py)
+    int osPageCacheTraceMB = 64;         // OsPageCacheTraceMB: that file's size, a ring (4-1024 MB)
     int osPageCacheKeepMs = 0;           // OsPageCacheKeepMs: OsPageCache releases blocks unused this long (ms, 100-600000); 0 = OsPageCacheTrimSeconds
     int animTeardownParallel = 1;        // AnimTeardownParallel: dying NPC animation data's interpolators
                                          // destroyed on helper threads, joined before the actor's clean-up goes on (start-up
@@ -933,8 +935,33 @@ void ConvertR10G10B10A2ToColor(uint32_t width, uint32_t height, const uint8_t* i
 
 // screenshot_parallel.cpp (ScreenshotParallel: the menu screenshot's copies into fresh 33 MB arrays, one thread each)
 bool InstallOsPageCache(bool beforeGameCode, const wchar_t* traceDir, int trace);  // os_page_cache.cpp: the OS thunks' detours (start-up)
-void SetOsPageCache(int mode, int capMB, int trimSeconds, bool relief, int keepMs = 0);  // OsPageCache, live (1-second tick): also trims unused blocks
+void SetOsPageCache(int mode, int capMB, int trimSeconds, bool relief, int keepMs = 0, int traceMB = 0);  // OsPageCache, live (1-second tick): also trims unused blocks; traceMB > 0 = OsPageCacheTrace on
 void LogOsPageCacheStats();
+// os_page_cache_trace.cpp (OsPageCacheTrace: a bounded binary ring file of the cache's allocs and frees; layout in that file)
+enum OsTraceKind : uint32_t {
+    kTraceAllocHit = 1,    // cache-miss caller served from the cache
+    kTraceAllocMiss = 2,   // cache-miss caller, cache on, nothing of that size: new block from Windows
+    kTraceAllocOff = 3,    // cache-miss caller, cache off: new block from Windows (eligible for the cache)
+    kTraceAllocOther = 4,  // any other caller (tables, OOM reserve, > 16 MB): always a new block
+    kTraceFreeKept = 5,    // release kept in the cache
+    kTraceFreePassed = 6,  // cache on, release not kept (too big / odd size / over cap): to Windows
+    kTraceFreeOff = 7,     // cache off: release to Windows
+    kTraceEvictCap = 8, kTraceEvictSize = 9, kTraceEvictRoom = 10,  // a kept block released: over the cap, one size over half, no node slot
+    kTraceEvictTrim = 11,  // a kept block released: unused for the keep time
+    kTraceEvictFlush = 12, // a kept block released: relief, switched off, failed allocation, lowered cap
+    kTraceMark = 13,       // settings change: size = cap bytes, id = keep ms
+};
+extern std::atomic<bool> g_osTraceOn;
+uint32_t OsTraceAddrId(const void* p);
+void OsTraceRecord(uint32_t kind, uint64_t size, uint32_t id);
+bool OsTraceStart(const wchar_t* dir, uint64_t maxBytes, int capMB, int keepMs);
+void OsTraceStop();
+uint64_t OsTraceFlush();
+struct OsTraceStatsOut {
+    bool on;
+    uint64_t written, dropped, capacity;
+};
+void OsTraceStats(OsTraceStatsOut* out);
 struct OsPageCacheStatsOut {
     uint64_t hits, misses, kept, passed, evictCap, evictSize, trimmed, flushed, allocFails, held;
     uint32_t blocks;
@@ -944,6 +971,7 @@ void OsPageCacheTestInit(void* (*osAlloc)(SIZE_T), BOOL (*osFree)(void*), uint64
 void* OsPageCacheTestAlloc(size_t size, bool cachePath);
 BOOL OsPageCacheTestFree(void* ptr, size_t size);
 void OsPageCacheTestStats(OsPageCacheStatsOut* out);
+void OsPageCacheTestInstallTrace(const wchar_t* dir, uint64_t maxBytes);  // the trace writer on a test directory
 struct OsPageCacheInfoOut {
     uint8_t* allocFn;
     uint8_t* freeFn;

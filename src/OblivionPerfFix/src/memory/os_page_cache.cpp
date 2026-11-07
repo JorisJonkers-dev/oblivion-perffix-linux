@@ -19,6 +19,7 @@
 #include <cstdio>
 #include <cstring>
 #include <new>
+#include <string>
 
 #pragma intrinsic(_ReturnAddress)
 
@@ -113,6 +114,7 @@ int ClassOf(uint64_t size)
 }
 const void* g_cacheRet[2] = {};  // AllocateImpl's two cache-miss calls (return addresses)
 int g_mode = 0;
+std::wstring g_traceDir;
 
 uint64_t MaxBlock(uint64_t cap) { return (std::min)(16ull << 20, cap / 8); }
 
@@ -183,7 +185,11 @@ bool Put(void* ptr, uint64_t size)
     const uint64_t cap = g_cap.load(std::memory_order_relaxed);
     if (!ptr || size < 4096 || (size & 4095) || size > MaxBlock(cap)) return false;
     Cache& c = *g_cache;
-    void* evict[kMaxEvict + 2];
+    struct Evicted {
+        void* ptr;
+        uint64_t bytes;
+        uint32_t kind;
+    } evict[kMaxEvict + 2];
     int ne = 0;
     bool kept = true;
     const uint64_t now = g_nowMs();
@@ -193,7 +199,7 @@ bool Put(void* ptr, uint64_t size)
         kept = false;
     } else {
         if (c.freeNodes == kNil) {  // no node left: the oldest block goes
-            evict[ne++] = c.nodes[c.oldest].ptr;
+            evict[ne++] = {c.nodes[c.oldest].ptr, c.nodes[c.oldest].bytes, kTraceEvictRoom};
             Unlink(c, c.oldest);
             g_evictRoom.fetch_add(1, std::memory_order_relaxed);
         }
@@ -219,13 +225,13 @@ bool Put(void* ptr, uint64_t size)
         ++c.count;
         // one size holds at most half the cap: its oldest blocks go first
         while (b.bytes > cap / 2 && b.oldest != i && ne < kMaxEvict) {
-            evict[ne++] = c.nodes[b.oldest].ptr;
+            evict[ne++] = {c.nodes[b.oldest].ptr, c.nodes[b.oldest].bytes, kTraceEvictSize};
             Unlink(c, b.oldest);
             g_evictSize.fetch_add(1, std::memory_order_relaxed);
         }
         // the cap: the oldest blocks go
         while (c.held > cap && c.oldest != i && ne < kMaxEvict) {
-            evict[ne++] = c.nodes[c.oldest].ptr;
+            evict[ne++] = {c.nodes[c.oldest].ptr, c.nodes[c.oldest].bytes, kTraceEvictCap};
             Unlink(c, c.oldest);
             g_evictCap.fetch_add(1, std::memory_order_relaxed);
         }
@@ -234,29 +240,40 @@ bool Put(void* ptr, uint64_t size)
             kept = false;
         }
         if (c.held > c.peak) c.peak = c.held;
+        // recorded before the lock goes, so the block's next hit cannot be logged ahead of this release
+        if (kept && g_osTraceOn.load(std::memory_order_relaxed)) OsTraceRecord(kTraceFreeKept, size, OsTraceAddrId(ptr));
     }
     ReleaseSRWLockExclusive(&c.lock);
-    for (int k = 0; k < ne; ++k) g_osFree(evict[k]);
+    for (int k = 0; k < ne; ++k) {
+        if (g_osTraceOn.load(std::memory_order_relaxed)) OsTraceRecord(evict[k].kind, evict[k].bytes, OsTraceAddrId(evict[k].ptr));
+        g_osFree(evict[k].ptr);
+    }
     return kept;
 }
 
 // Releases blocks older than maxAgeMs (all with maxAgeMs = 0) to the OS, outside the lock, in batches.
 uint64_t Release(uint64_t maxAgeMs)
 {
+    const uint32_t kind = maxAgeMs ? kTraceEvictTrim : kTraceEvictFlush;
     if (!g_cache) return 0;
     Cache& c = *g_cache;
     uint64_t total = 0;
     for (;;) {
         void* batch[256];
+        uint64_t sizes[256];
         int n = 0;
         const uint64_t now = g_nowMs();
         AcquireSRWLockExclusive(&c.lock);
         while (n < 256 && c.oldest != kNil && (!maxAgeMs || now - c.nodes[c.oldest].freedMs >= maxAgeMs)) {
+            sizes[n] = c.nodes[c.oldest].bytes;
             batch[n++] = c.nodes[c.oldest].ptr;
             Unlink(c, c.oldest);
         }
         ReleaseSRWLockExclusive(&c.lock);
-        for (int k = 0; k < n; ++k) g_osFree(batch[k]);
+        for (int k = 0; k < n; ++k) {
+            if (g_osTraceOn.load(std::memory_order_relaxed)) OsTraceRecord(kind, sizes[k], OsTraceAddrId(batch[k]));
+            g_osFree(batch[k]);
+        }
         total += n;
         if (n < 256) return total;
     }
@@ -269,6 +286,7 @@ void* AllocCore(SIZE_T size, bool cachePath)
             g_hits.fetch_add(1, std::memory_order_relaxed);
             g_class[ClassOf(size)].hits.fetch_add(1, std::memory_order_relaxed);
             g_hitBytes.fetch_add(size, std::memory_order_relaxed);
+            if (g_osTraceOn.load(std::memory_order_relaxed)) OsTraceRecord(kTraceAllocHit, size, OsTraceAddrId(p));
             return p;
         }
         g_misses.fetch_add(1, std::memory_order_relaxed);
@@ -281,6 +299,9 @@ void* AllocCore(SIZE_T size, bool cachePath)
         g_flushed.fetch_add(Release(0), std::memory_order_relaxed);
         p = g_osAlloc(size);
     }
+    if (p && g_osTraceOn.load(std::memory_order_relaxed))
+        OsTraceRecord(!cachePath ? kTraceAllocOther : g_on.load(std::memory_order_relaxed) ? kTraceAllocMiss : kTraceAllocOff, size,
+                      OsTraceAddrId(p));
     return p;
 }
 
@@ -295,6 +316,8 @@ BOOL FreeCore(void* ptr, SIZE_T size)
         g_passed.fetch_add(1, std::memory_order_relaxed);
         g_class[ClassOf(size)].passed.fetch_add(1, std::memory_order_relaxed);
     }
+    if (ptr && g_osTraceOn.load(std::memory_order_relaxed))  // before the release: the address may be handed out again at once
+        OsTraceRecord(g_on.load(std::memory_order_relaxed) ? kTraceFreePassed : kTraceFreeOff, size, OsTraceAddrId(ptr));
     return g_osFree(ptr);
 }
 
@@ -365,8 +388,7 @@ bool InstallOsPageCache(bool beforeGameCode, const wchar_t* traceDir, int trace)
     ResetCache(*g_cache);
     g_cacheRet[0] = ai + kCall1 + 5;
     g_cacheRet[1] = ai + kCall2 + 5;
-    (void)traceDir;
-    (void)trace;
+    g_traceDir = traceDir ? traceDir : L".";
     uint8_t* const region = AllocNearGame(64);
     if (!region) {
         Log("[oscache] no memory near the game's code: not installed");
@@ -389,6 +411,7 @@ bool InstallOsPageCache(bool beforeGameCode, const wchar_t* traceDir, int trace)
     g_allocFn = a;
     g_freeFn = f;
     g_installed = true;
+    if (trace > 0) OsTraceStart(g_traceDir.c_str(), static_cast<uint64_t>(trace) << 20, 0, 0);
     Log("[oscache] installed: BinnedAllocFromOS exe+0x%llX, BinnedFreeToOS exe+0x%llX, AllocateImpl's cache-miss calls "
         "exe+0x%llX / exe+0x%llX",
         static_cast<unsigned long long>(a - Game().base), static_cast<unsigned long long>(f - Game().base),
@@ -397,9 +420,11 @@ bool InstallOsPageCache(bool beforeGameCode, const wchar_t* traceDir, int trace)
 }
 
 // Live (main's 1-second tick): the key, the hidden cap / trim keys, MemoryRelief's RAM/commit relief; trims old blocks.
-void SetOsPageCache(int mode, int capMB, int trimSeconds, bool relief, int keepMs)
+void SetOsPageCache(int mode, int capMB, int trimSeconds, bool relief, int keepMs, int traceMB)
 {
     if (!g_installed) return;
+    if (traceMB > 0 && !g_osTraceOn.load()) OsTraceStart(g_traceDir.c_str(), static_cast<uint64_t>(traceMB) << 20, capMB, keepMs);
+    else if (traceMB <= 0 && g_osTraceOn.load()) OsTraceStop();
     const uint64_t cap = static_cast<uint64_t>((std::clamp)(capMB, 4, 1024)) << 20;
     g_cap.store(cap, std::memory_order_relaxed);
     // OsPageCacheKeepMs (100 ms - 10 min) wins over the older OsPageCacheTrimSeconds
@@ -411,9 +436,13 @@ void SetOsPageCache(int mode, int capMB, int trimSeconds, bool relief, int keepM
         Log("[oscache] %s", relief ? "Windows is short of RAM or commit: the kept blocks go back, released blocks go to Windows"
                                    : "memory recovered: released blocks are kept again");
     static int lastCap = -1, lastTrim = -1;
+    static bool g_lastRelief = false;
     if (mode != g_mode || (mode && (capMB != lastCap || static_cast<int>(keep) != lastTrim)))
         Log("[oscache] %s (cap %llu MB, unused blocks released after %llu ms)", mode ? "on: released OS blocks are kept for reuse" : "off: as the game",
             static_cast<unsigned long long>(cap >> 20), static_cast<unsigned long long>(keep));
+    if (g_osTraceOn.load() && (mode != g_mode || relief != g_lastRelief || capMB != lastCap || static_cast<int>(keep) != lastTrim))
+        OsTraceRecord(kTraceMark, (cap >> 20 << 20) | (on ? 1 : 0), static_cast<uint32_t>(keep));  // size = cap bytes | on, id = keep ms
+    g_lastRelief = relief;
     lastCap = capMB;
     lastTrim = static_cast<int>(keep);
     g_on.store(on);
@@ -467,6 +496,10 @@ void LogOsPageCacheStats()
                       static_cast<unsigned long long>(p));
     }
     if (n) Log("[oscache] by size: %s", line);
+    OsTraceStatsOut ts{};
+    OsTraceStats(&ts);
+    if (ts.on) Log("[oscache] trace: %llu records written, %llu dropped (ring of %llu)", static_cast<unsigned long long>(ts.written),
+                   static_cast<unsigned long long>(ts.dropped), static_cast<unsigned long long>(ts.capacity));
 }
 
 bool OsPageCacheInfo(OsPageCacheInfoOut* out)
@@ -498,6 +531,11 @@ void OsPageCacheTestInit(void* (*osAlloc)(SIZE_T), BOOL (*osFree)(void*), uint64
                     &g_trimmed, &g_flushed, &g_allocFails})
         s->store(0);
     for (auto& c : g_class) c.hits = c.misses = c.kept = c.passed = 0;
+}
+void OsPageCacheTestInstallTrace(const wchar_t* dir, uint64_t maxBytes)
+{
+    OsTraceStop();
+    OsTraceStart(dir, maxBytes, 64, 5000);
 }
 void* OsPageCacheTestAlloc(size_t size, bool cachePath) { return AllocCore(size, cachePath); }
 BOOL OsPageCacheTestFree(void* ptr, size_t size) { return FreeCore(ptr, size); }

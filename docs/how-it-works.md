@@ -476,6 +476,8 @@ ms, frames of 25 ms or more 17-22 -> 12-14.
 
 *Tuning (Proton / any PC):* the cap and the keep time are the keys `OsPageCacheMB` (default 64) and `OsPageCacheKeepMs` (default 5000). The stats line also prints hits, misses, kept and released blocks per size class (`[oscache] by size`), because on the Linux test runs only 17-44% of requests were hits with ~10,000 releases over the cap; whether a bigger cap helps is for an A/B run to say, so the default is unchanged.
 
+*Recording and replaying (`OsPageCacheTrace`):* `OsPageCacheTrace=1` writes every block request and release the list sees (time, size, reused / kept / released) to `OblivionPerfFix-oscache-trace.bin` next to the DLL, a ring of `OsPageCacheTraceMB` (64) megabytes. `tools/oscache_sim.py` replays it against other caps, keep times, size rounding and eviction rules without starting the game, and `linux/oscache-bench.sh` measures what a miss costs under Wine. Method and results: [research-linux/ideas/oscache-sim.md](research-linux/ideas/oscache-sim.md).
+
 **The problem.** Unreal's memory manager gets its memory from Windows in blocks (64 KB pages for small objects, and
 blocks of up to 16 MB for bigger arrays). When a block is no longer needed it goes onto a short list of spare blocks,
 and the next request of exactly that size takes one from the list. The list holds only 64 blocks. With many threads and

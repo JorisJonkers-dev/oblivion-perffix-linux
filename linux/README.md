@@ -158,6 +158,19 @@ the heading sent by about 0.3 s (`--cam-lag`), which the sector assignment subtr
 are cut by variant window (the ledger's clock is anchored on the two sync stalls) and ranked per variant in
 `diag/ledger-<variant>.txt`.
 
+## Tuning the spare-block cache offline (OsPageCache)
+
+Record one trace in the game, then try policies without it (details: [docs/research-linux/ideas/oscache-sim.md](../docs/research-linux/ideas/oscache-sim.md)):
+
+```bash
+linux/build-dll.sh                                      # build-linux/OblivionPerfFix.dll
+linux/bench.py run ... --dll build-linux/OblivionPerfFix.dll --fix-ini OsPageCacheTrace=1
+# the run folder gets diag/OblivionPerfFix-oscache-trace.bin; then
+python3 tools/oscache_sim.py info results/<run>/diag/OblivionPerfFix-oscache-trace.bin
+python3 tools/oscache_sim.py grid results/<run>/diag/OblivionPerfFix-oscache-trace.bin --costs build-linux/oscache-bench/costs.csv
+linux/oscache-bench.sh                                  # what one miss costs under headless Wine (no game, no Steam)
+```
+
 ## How the numbers are computed
 
 MangoHud logs every presented frame (`log_interval=0`, `autostart_log=1`, overlay cut down to a small fps counter; `no_display` stops MangoHud from logging):

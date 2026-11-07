@@ -43,6 +43,10 @@ Proton / Wine awareness (the game always runs under Proton on Linux; `IsWine()` 
   driver's compile threads are not visible there ("no driver compile threads found" every run). It now also watches
   whether UE's pipeline queue drains (at least 250 waiting and no 5% fall in 6 seconds in a row = a slow, cold-cache
   build) and keeps the game's pace then. No effect on Windows. A guess to be confirmed on a cold shader cache; 0 = off.
+- **`OsPageCacheTrace`** (new, 0), **`OsPageCacheTraceMB`** (64): records every alloc / free the spare-block list sees into
+  `OblivionPerfFix-oscache-trace.bin` (a bounded ring, written by a background thread) so `tools/oscache_sim.py` can
+  replay it against other caps, keep times and size rounding offline; `linux/oscache-bench.sh` measures the cost of a miss
+  under Wine. Off by default; no change to what the list does.
 - **`OsPageCacheMB`, `OsPageCacheKeepMs`** (new in the ini; defaults unchanged, 64 MB and 5 s): tune the spare-block
   cache; the log prints hits and misses per block size. Proton runs showed only 17-44% hits.
 - **`SharedMemoryGpuWine`** (new, 1): under Wine the GPU's memory kind is now asked too, so `SharedMemoryGpu=2` applies
