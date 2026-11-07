@@ -5,6 +5,11 @@
 #   linux/build-dll.sh [outdir]      default outdir: build-linux/ at the repo root; output <outdir>/OblivionPerfFix.dll
 # Env: OPF_XWIN=<dir> (default ~/.cache/oblivion-perffix/xwin, ~800 MB, fetched once), OPF_JOBS=<n>, OPF_DEBUG=1 (/Od /MTd).
 # Same flags as build.ps1 minus /W4 /WX /GL /LTCG and the version resource. Never touches the game or Steam.
+# /EHa (not /EHsc) is REQUIRED: the fixes guard raw memory reads with __try/__except (EXCEPTION_EXECUTE_HANDLER). Without
+# /EHa clang assumes plain loads never fault and drops the whole __try (no handler in the unwind info), so a stale
+# pointer kills the game instead of being caught (the tick_split ProbeKind crash). MSVC always handles this; clang needs /EHa.
+# Next to the DLL (not deployed): OblivionPerfFix.pdb (codeview, /Zi) and OblivionPerfFix.map (/MAP) for symbolising a
+# crash offset: linux/symbolize.sh <dll> <rva>...
 set -euo pipefail
 if [ -z "${OPF_IN_NIX:-}" ] && ! command -v clang-cl >/dev/null; then
   exec env OPF_IN_NIX=1 nix --extra-experimental-features 'nix-command flakes' shell \
@@ -25,10 +30,10 @@ llvm-ml -m64 -nologo -c -Fo"$OBJ/proxy_stubs.obj" src/core/proxy_stubs.asm
 # every .cpp in the area folders except lab/ (same set as build.ps1); object names must be unique
 mapfile -t FILES < <(ls src/*/*.cpp | grep -v '^src/lab/' | sort)
 printf '%s\n' "${FILES[@]}" | xargs -P "${OPF_JOBS:-$(nproc)}" -I{} sh -c '
-  clang-cl --target=x86_64-pc-windows-msvc /nologo /std:c++20 '"$OPT"' /EHsc /DUNICODE /D_UNICODE \
+  clang-cl --target=x86_64-pc-windows-msvc /nologo /std:c++20 '"$OPT"' /EHa /Zi /DUNICODE /D_UNICODE \
     '"${INC[*]}"' /I'"$SRC"'/src/core -Wno-everything -c {} /Fo'"$OBJ"'/$(basename {} .cpp).obj'
 OBJS=("$OBJ/proxy_stubs.obj"); for f in "${FILES[@]}"; do OBJS+=("$OBJ/$(basename "$f" .cpp).obj"); done
-lld-link /nologo /DLL /machine:x64 /DEF:"$SRC/OblivionPerfFix.def" /OUT:"$OUT/OblivionPerfFix.dll" \
+lld-link /nologo /DLL /machine:x64 /DEF:"$SRC/OblivionPerfFix.def" /OUT:"$OUT/OblivionPerfFix.dll" /DEBUG /ignore:4099 /PDB:"$OUT/OblivionPerfFix.pdb" /MAP:"$OUT/OblivionPerfFix.map" \
   /OPT:REF /OPT:ICF /LIBPATH:"$X/crt/lib/x86_64" /LIBPATH:"$X/sdk/lib/um/x86_64" /LIBPATH:"$X/sdk/lib/ucrt/x86_64" \
   "${OBJS[@]}" kernel32.lib
 ls -l "$OUT/OblivionPerfFix.dll"

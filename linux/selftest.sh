@@ -53,6 +53,16 @@ set +e
 "$WINE" selftest.exe "Z:${EXE//\//\\}" 2>&1 | tee "$OUT/selftest.out.log"
 rc=${PIPESTATUS[0]}
 set -e
+# Build-flag guard: tests/seh_probe.cpp compiled with the DLL's own EH flag (read from build-dll.sh) and optimisation must
+# survive a __try around a bad-pointer load (without /EHa, clang drops the __try and the game crashes).
+DLL_EH=$(grep -o '/EH[a-z]*' "$REPO/linux/build-dll.sh" | head -1)
+clang-cl --target=x86_64-pc-windows-msvc /nologo /std:c++20 /O2 /MT "$DLL_EH" "${INC[@]}" -Wno-everything \
+  -c "$REPO/linux/tests/seh_probe.cpp" /Fo"$OBJ/seh_probe.obj" >&2 || { echo "selftest: seh_probe compile failed" >&2; exit 2; }
+lld-link /nologo /SUBSYSTEM:console /machine:x64 /OUT:"$OUT/seh_probe.exe" /LIBPATH:"$X/crt/lib/x86_64" \
+  /LIBPATH:"$X/sdk/lib/um/x86_64" /LIBPATH:"$X/sdk/lib/ucrt/x86_64" "$OBJ/seh_probe.obj" kernel32.lib >&2 \
+  || { echo "selftest: seh_probe link failed" >&2; exit 2; }
+"$WINE" seh_probe.exe 2>&1 | tee -a "$OUT/selftest.out.log" || true
+set -e
 # Checks that can only fail under Wine because they assert "this PC is Windows itself" (listed, never hidden):
 WINE_ONLY='^FAIL  SharedMemoryGpu: this PC is Windows itself'
 nwine=$(grep -c "$WINE_ONLY" "$OUT/selftest.out.log" || true)

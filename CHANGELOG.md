@@ -11,6 +11,11 @@ driver library); **our bug** = caused by an earlier version of OblivionPerfFix.
 
 ## Unreleased
 
+- **Linux build fix (our bug, Linux/clang builds only):** `linux/build-dll.sh` compiled with `/EHsc`, so clang dropped every
+  `__try/__except` that guards plain memory reads (no handler in the unwind info) and a stale pointer in `TickSplit`'s
+  kind probe crashed the game (access violation in `ExecHook`). It now uses `/EHa` like the self-test, writes
+  `OblivionPerfFix.pdb` and `.map` next to the DLL, and `linux/symbolize.sh <dll> <rva>...` maps crash offsets.
+  The self-test builds `linux/tests/seh_probe.cpp` with the DLL's flag and fails if a guarded bad read is not caught.
 - **New diagnostics `OtProfile` and `OtCrashContext`** (off; for finding what the game's old engine thread spends its
   frame on, and which stage it was in when it crashed). They only read the clock and the game's own stage number:
   nothing the game does changes. `OtProfile=1` at start-up writes `OblivionPerfFix-otprofile.csv` (slow frames and
