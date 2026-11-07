@@ -9,3 +9,4 @@ lab/
 run/
 # Linux benchmark results
 linux/results/
+build-linux/
