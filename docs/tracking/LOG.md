@@ -5,6 +5,27 @@ Investigations: [investigations.md](investigations.md).
 
 ## 2026-11-07
 
+### Detail arrival, re-analysed with brightness-normalised sharpness: switches help on entering interiors only
+Metric: Laplacian variance divided by the squared mean luminance. Timing starts once the brightness has been stable for
+1 s. Re-analysis of the `vtdoor` A/B: 3+3 runs, medians, base → `VtStreamingUploads=64` + `FadeVtFlushSkip=1`.
+
+| Door | Brightness stable | Sharp after it | Sharp, counted from arrival |
+|---|---|---|---|
+| inn enter | 3.9 → 3.4 s | 0 → 0 s | 5.9 → 3.4 s |
+| inn exit | 4.4 → 4.6 s | 3.5 → 4.1 s | 7.9 → 9.1 s |
+| chapel enter | 3.4 → 3.8 s | **4.0 → 0.0 s (all 3 runs)** | 7.4 → 3.8 s |
+| chapel exit | 4.2 → 4.2 s | 4.0 → 4.0 s | 8.1 → 8.2 s |
+| west gate enter | 4.6 → 4.6 s | 0 → 0 s | 4.6 → 4.6 s |
+| west gate exit | 4.3 → 4.7 s | 0 → 0 s | 4.3 → 4.7 s |
+
+- Entering interiors: detail arrives 2.5–3.5 s sooner with the switches.
+- Leaving to exteriors: no change. Detail keeps sharpening for about 3.5–4.5 s after the brightness settles on both sides.
+  That is real streaming, and these switches don't address it.
+- The earlier 0.03 and 0.06 ratios were dark frames: an artefact of the old metric.
+- Verdict: small benefit, and FPS was mixed (inn enter −13%, the rest within noise). Candidate to enable after a
+  confirmation run. Exterior detail arrival is open: see `texture-streaming.md`, the loading-screen prewarm idea.
+
+
 ### Door test of `VtStreamingUploads=64` + `FadeVtFlushSkip=1` with detail arrival (3+3 runs): inconclusive
 Report: [runs/20261107-111019-vtdoor.md](runs/20261107-111019-vtdoor.md). The detail capture (xwd through XWayland) works live.
 
