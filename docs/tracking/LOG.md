@@ -5,6 +5,25 @@ Investigations: [investigations.md](investigations.md).
 
 ## 2026-11-07
 
+### First cvar trade-off sweep at the canal (`spin-sweep-canal`, 4 slots per variant): no gains
+| Variant | avg fps | 1% low | 0.1% low | Hitches |
+|---|---|---|---|---|
+| base | 87.4 | 69.5 | 66.3 | 0 |
+| lumrefl: Reflections.DownsampleFactor 2, MaxRoughnessToTraceForFoliage 0 | 86.8 (~) | 68.8 | 62.4 | 0 |
+| vsm: SMRT rays 16→4, samples 4, MarkCoarsePagesDirectional 0 | 82.8 | 51.0 | **45.1 (−32%)** | 4 |
+| probes: ScreenProbeGather.DownsampleFactor 16→24 | 88.6 (~) | 70.5 | 66.7 | 0 |
+
+- `r.Lumen.HardwareRayTracing.Reflections.HitLighting` was not read back, so it may not exist in this build.
+- Base values read back: SMRT ray count 16, screen probe downsample 16, MaxRoughnessToTraceForFoliage 0.4.
+- Lumen reflections and probe resolution are not where the GPU time goes at the canal. The VSM pack hurts, probably
+  because of `MarkCoarsePages=0`.
+- **The SSIM comparison is invalid:** the base-vs-base floor was 0.30, because shots of the "same" heading are offset by
+  a few pixels. Being fixed with camera snapping plus image registration, and a `reshots` re-evaluation (branch
+  `ssim-align`).
+- **Lesson:** stop guessing cvars. Get a per-pass GPU profile first (RGP via RADV, vkd3d queue profiling, or UE GPU
+  stats), then target the top passes (branch `gpu-profile`).
+
+
 ### All 8 hotspots with our DLL `c7e911ea` (fresh `coc` start, own settings)
 The shader gate also covers the `coc` path: precompile finished before play at +35.7 s.
 

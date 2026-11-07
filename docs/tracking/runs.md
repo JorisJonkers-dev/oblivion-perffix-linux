@@ -104,3 +104,4 @@ hitches (frames longer than max(2 x median, 40 ms)), CPU/GPU load (%).
 | [20261107-123145-dll5-hotspots](runs/20261107-123145-dll5-hotspots.md) | dll5-hotspots | linux-hotspots | roxey-inn-night | own | fix=on dll:c7e911ea393c | 80.2 | 65.2 | 62.3 | 16.2 | 0 | 36 | 99 | ok |
 | [20261107-123145-dll5-hotspots](runs/20261107-123145-dll5-hotspots.md) | dll5-hotspots | linux-hotspots | doublecross-pond-rain | own | fix=on dll:c7e911ea393c | 66.2 | 59.6 | 56.7 | 24.9 | 0 | 36 | 99 | ok |
 | [20261107-123145-dll5-hotspots](runs/20261107-123145-dll5-hotspots.md) | dll5-hotspots | linux-hotspots | cheydinhal-chapel-square | own | fix=on dll:c7e911ea393c | 64.4 | 59.8 | 57.1 | 18.4 | 0 | 45 | 99 | ok |
+| [20261107-123825-spin-sweep-canal](runs/20261107-123825-spin-sweep-canal.md) | spin-sweep-canal | linux-hotspots | - | own | fix=on dll:4c76f28fc233 |  |  |  |  |  |  |  | ok |
