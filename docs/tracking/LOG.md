@@ -5,6 +5,28 @@ Investigations: [investigations.md](investigations.md).
 
 ## 2026-11-07
 
+### First live run of the merged Linux-built DLL: crash 25 s after launch
+- DLL `9608de6e`, with `OtProfile=1`, `OsPageCacheTrace=1` and `--diag`.
+- The game crashed right after a burst of NPC create commands at the start of a new game.
+- Error: `EXCEPTION_ACCESS_VIOLATION reading address 0x00000e080000bb91`.
+- Stack: `VERSION+0x19fcd` ← exe+0x37c1959 … ← `VERSION+0xc430` ← exe+0x37c9e14 … ← UE4SS. The runner restored the
+  installed DLL and ini.
+- Before the crash these worked: the trace writer, the OT profiler install (12 stages timed) and the Linux shader
+  fingerprint (`wine=11.0`, Proton Experimental 11.0-20261027b, vkd3d hashes, Mesa 26.2.6).
+- Being fixed (branch `crashfix`): map the offsets with a link map or PDB, then fix the root cause. `build-dll.sh` will
+  also emit symbols from now on.
+- Until the fix lands, nothing more runs with the Linux-built DLL.
+
+### OsPageCache trace from start-up (29 s, 19.6k eligible allocations): exact-size reuse has a low ceiling
+- Live hit rate: 12.6%.
+- Ceiling for exact-size reuse with an unbounded cache that never trims: **15.7%** (peak 975 MB). Larger caps or longer
+  keep times cannot help at start-up.
+- 352 distinct sizes. 64 KB is 45% of requests; most others are odd sizes in 4 KB steps (36–80 KB).
+- The only real lever is serving from a larger block (rounding up), which depends on whether UE's Binned2 tolerates a
+  block larger than it asked for. Unproven.
+- Needs a gameplay trace (doors, travel) before deciding anything.
+
+
 ### OsPageCache offline tuning kit (branch `oscache-sim`)
 **Tools:**
 - Trace recorder: `OsPageCacheTrace=1`, writes `OblivionPerfFix-oscache-trace.bin`.
