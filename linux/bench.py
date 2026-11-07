@@ -9,6 +9,8 @@ tools/Bench-Report.ps1. Standard library only. See linux/README.md.
   bench.py run --scenario showcase --fix stock --label s1
   bench.py ab --scenario showcase --rounds 2 --a stock --b on
   bench.py ab --scenario showcase --a on --b dll:build-linux/OblivionPerfFix.dll   # installed vs a built DLL
+  bench.py run --random 8 --seed 1 [--random-tags outdoor,city] [--random-worlds Tamriel]   # seeded random spots
+  bench.py list --random 8 --seed 1                      # show the drawn spots without running
   bench.py report --a s1,s2 --b f1,f2
   bench.py spin --scenario linux-hotspots --scene cheydinhal-canal --variant off:ini:RdgParallelTranslate=0
 """
@@ -20,7 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from oblvbench import dllvariant, envfile, fixini, game, scenario, spin, spinshots, ue4ss  # noqa: E402
+from oblvbench import dllvariant, envfile, fixini, game, randspots, scenario, spin, spinshots, ue4ss  # noqa: E402
 from oblvbench.paths import Paths  # noqa: E402
 from oblvbench.report import load_runs, redetail_runs, write_comparison, write_redetail  # noqa: E402
 from oblvbench.runner import Options, Runner  # noqa: E402
@@ -89,7 +91,35 @@ def cmd_restore(a, paths):
         installer(paths).remove()
 
 
+def draw_random(a, n, seed):
+    """(spots, scenario dict) for --random N --seed S: static scenes on top of --scenario's defaults/settings."""
+    base = scenario.load_scenario(a.scenario or "cheydinhal")
+    try:
+        pool = randspots.build_pool()
+        spots = randspots.draw_spots(pool, n, seed, a.random_tags, a.random_worlds, a.random_hours, a.random_weather)
+    except ValueError as e:
+        raise SystemExit(f"random: {e}")
+    return spots, randspots.build_scenario(spots, base, seed)
+
+
+def write_random(scn, spots, run_dir, header):
+    """scenario.json (loadable with scenario_dir=run_dir) and spots.md into the run folder."""
+    randspots.write_scenario(scn, run_dir)
+    (Path(run_dir) / "spots.md").write_text(f"# {header}\n\n```\n{randspots.describe(spots)}\n```\n")
+
+
+def random_run_dir(paths, label):
+    return paths.results / f"{time.strftime('%Y%m%d-%H%M%S')}-{label}"
+
+
 def cmd_list(a, paths):
+    if a.random:
+        spots, scn = draw_random(a, a.random, a.seed)
+        by_group, _ = randspots.pool_summary(randspots.filter_pool(randspots.build_pool(), a.random_tags, a.random_worlds))
+        say(f"{len(spots)} random spots, seed {a.seed} (pool after filters: {sum(by_group.values())}; "
+            f"{', '.join(f'{k} {v}' for k, v in by_group.items())})")
+        say(randspots.describe(spots))
+        return
     if a.scenario:
         scn = scenario.load_scenario(a.scenario)
         for s in scenario.select_scenes(scn, split_list(a.scenes), split_list(a.tags)):
@@ -108,7 +138,14 @@ def cmd_list(a, paths):
 
 
 def cmd_run(a, paths):
-    r = Runner(paths, run_options(a), say=say).run()
+    over = {}
+    if a.random:
+        spots, scn = draw_random(a, a.random, a.seed)
+        run_dir = random_run_dir(paths, a.label)
+        write_random(scn, spots, run_dir, f"{len(spots)} random spots, seed {a.seed}")
+        say(f"random spots (seed {a.seed}):\n{randspots.describe(spots)}")
+        over = dict(scenario="scenario", scenario_dir=run_dir, run_dir=run_dir, scenes=None, tags=None)
+    r = Runner(paths, run_options(a, **over), say=say).run()
     return 0 if r["outcome"] == "ok" else (1 if r["outcome"] == "partial" else 2)
 
 
@@ -121,12 +158,22 @@ def parse_pos(text):
 
 
 def cmd_spin(a, paths):
+    over = {}
+    if a.random_spot is not None:
+        if a.scene or a.pos:
+            raise SystemExit("--random-spot replaces --scene / --pos")
+        spots, scn = draw_random(a, 1, a.random_spot)
+        run_dir = random_run_dir(paths, f"spin-{a.label}")
+        write_random(scn, spots, run_dir, f"random spot, seed {a.random_spot}")
+        say(f"random spot (seed {a.random_spot}):\n{randspots.describe(spots)}")
+        a.scene = scn["scenes"][0]["id"]
+        over = dict(scenario="scenario", scenario_dir=run_dir, run_dir=run_dir)
     if bool(a.scene) == bool(a.pos):
         raise SystemExit("give either --scene ID (of --scenario) or --pos x,y,z --heading H --world/--cell NAME")
     try:
         variants = spin.parse_variants(a.variant)
         shot_headings = spinshots.parse_headings(a.shot_headings) if a.shot_headings else None
-        opts = SpinOptions(**{**run_kwargs(a, label=f"spin-{a.label}", scenes=[a.scene] if a.scene else None, tags=None),
+        opts = SpinOptions(**{**run_kwargs(a, label=f"spin-{a.label}", scenes=[a.scene] if a.scene else None, tags=None, **over),
                               "variants": variants, "rounds": a.rounds, "laps": a.laps, "settle": a.settle,
                               "deg_per_sec": a.deg_per_sec, "pitch": a.pitch, "cam_lag": a.cam_lag,
                               "look_interval": a.look_ms / 1000.0, "pos": parse_pos(a.pos) if a.pos else None,
@@ -179,6 +226,9 @@ def cmd_ab(a, paths):
     inst = installer(paths)
     stamp = time.strftime("%m%d-%H%M")
     code = 0
+    rand = draw_random(a, a.random, a.seed) if a.random else None
+    if rand:
+        say(f"random spots (seed {a.seed}), the same for both sides:\n{randspots.describe(rand[0])}")
     try:
         inst.install()
         for rnd in range(1, a.rounds + 1):
@@ -186,8 +236,13 @@ def cmd_ab(a, paths):
                 mode, dll = sides[key]["fix"], sides[key]["dll"]
                 label = f"{a.label}-{stamp}-{key.upper()}{sides[key]['tag']}-r{rnd}"
                 say(f"== round {rnd}/{a.rounds}: {key.upper()} = {sides[key]['name']} ({label})")
+                over = {}
+                if rand:
+                    run_dir = random_run_dir(paths, label)
+                    write_random(rand[1], rand[0], run_dir, f"{len(rand[0])} random spots, seed {a.seed}")
+                    over = dict(scenario="scenario", scenario_dir=run_dir, run_dir=run_dir, scenes=None, tags=None)
                 r = Runner(paths, run_options(a, label=label, fix=mode, dll=dll, dll_ini=a.dll_ini if dll else None,
-                                              keep_ue4ss=True, fix_ini=side_ini(a, key)),
+                                              keep_ue4ss=True, fix_ini=side_ini(a, key), **over),
                            say=say).run()
                 if r["outcome"] == "failed":
                     raise SystemExit(f"run {label} failed: {r.get('error')} (see its report.md)")
@@ -202,6 +257,8 @@ def cmd_ab(a, paths):
                 say(f"WARNING: UE4SS not removed: {e}")
     d = write_comparison(load_runs(names["a"], paths.results), load_runs(names["b"], paths.results),
                          sides["a"]["name"], sides["b"]["name"], paths.results, a.label)
+    if rand:
+        write_random(rand[1], rand[0], d, f"{len(rand[0])} random spots, seed {a.seed} (both sides)")
     say(f"REPORT {d / 'report.md'}")
     print((d / "report.md").read_text())
     return code
@@ -219,6 +276,23 @@ def cmd_report(a, paths):
     d = write_comparison(runs_a, runs_b, a.name_a, a.name_b, paths.results, a.label)
     say(f"REPORT {d / 'report.md'}")
     print((d / "report.md").read_text())
+
+
+def add_random_args(p, spin=False):
+    p.add_argument("--random-tags", action="append", metavar="TAG[,TAG]",
+                   help="random spots: only places with any of these tags (outdoor, city, interior, water, night...)")
+    p.add_argument("--random-worlds", action="append", metavar="W[,W]",
+                   help="random spots: Tamriel, Interior, ShiveringIsles, Oblivion or an exact world/cell name")
+    p.add_argument("--random-hours", choices=["day", "any"], default="day", help="random hour: daylight (7-17, default) or 0-23")
+    p.add_argument("--random-weather", default="Clear",
+                   help="Clear (default), a name, a comma list, or 'any' (the spot's scenario weathers)")
+    if spin:
+        p.add_argument("--random-spot", type=int, metavar="SEED", help="spin at one random spot drawn by this seed")
+    else:
+        p.add_argument("--random", type=int, default=0, metavar="N",
+                       help="N static scenes at seeded random places of all scenarios instead of --scenario's scenes "
+                            "(--scenario still supplies settle/measure/profile); written to the run folder as scenario.json")
+        p.add_argument("--seed", type=int, default=1, help="seed of --random (same seed = same spots and order)")
 
 
 def add_run_args(p):
@@ -273,13 +347,17 @@ def main(argv=None):
     p.add_argument("--scenario")
     p.add_argument("--scenes", action="append")
     p.add_argument("--tags", action="append")
+    add_random_args(p)
+    p.set_defaults(scenario=None)
     p = sub.add_parser("run", help="one run in one game session")
     add_run_args(p)
+    add_random_args(p)
     p.add_argument("--fix", choices=["on", "fix", "stock", "off"], default="on",
                    help="on/fix: the ini as installed; stock: every switch 0 but FrameRateLimitAtStart; off: DLL not loaded")
     p = sub.add_parser("spin", help="one spot, camera spinning in laps, settings flipped live in ABBA order")
     add_run_args(p)
     p.set_defaults(scenario="linux-hotspots")
+    add_random_args(p, spin=True)
     p.add_argument("--scene", help="a static scene of --scenario: its place, hour and weather")
     p.add_argument("--pos", help="x,y,z instead of --scene (with --heading and --world or --cell)")
     p.add_argument("--heading", type=float, help="start heading in degrees (0 = north, 90 = east); default: the scene's")
@@ -311,6 +389,7 @@ def main(argv=None):
     p.add_argument("--gain-hitches", type=float, default=25.0, help="GAIN when hitches fall by at least this %% (default 25)")
     p = sub.add_parser("ab", help="alternate A and B in fresh games, then report")
     add_run_args(p)
+    add_random_args(p)
     p.add_argument("--rounds", type=int, default=2)
     p.add_argument("--a", default="stock", metavar="SIDE", help="on | stock | off | dll:PATH[@stock] (default stock)")
     p.add_argument("--b", default="on", metavar="SIDE", help="on | stock | off | dll:PATH[@stock] (default on)")
