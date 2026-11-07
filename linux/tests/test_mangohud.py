@@ -132,3 +132,16 @@ class StatsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RepairTest(unittest.TestCase):
+    def test_garbage_frametime_replaced_by_gap(self):
+        rows = ["fps,frametime,cpu_load,gpu_load,elapsed"]
+        el = 0
+        for i in range(10):
+            el += 10_000_000                      # 10 ms apart
+            ft = 37337300.0 if i == 5 else 10.0
+            rows.append(f"100,{ft},50,90,{el}")
+        log = mangohud.parse_text("\n".join(rows) + "\n")
+        self.assertEqual(log.repaired, 1)
+        self.assertLess(max(log.frametime), 11)

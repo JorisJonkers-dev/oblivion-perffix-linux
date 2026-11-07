@@ -26,6 +26,7 @@ class FrameLog:
     path: str = ""
     elapsed: list = field(default_factory=list)     # seconds since log start, per frame
     frametime: list = field(default_factory=list)   # ms
+    repaired: int = 0                               # garbage frametimes replaced by the row gap
     cpu_load: list = field(default_factory=list)    # % (None if missing)
     gpu_load: list = field(default_factory=list)
     columns: list = field(default_factory=list)
@@ -78,7 +79,21 @@ def parse_text(text, src=""):
         log.frametime.append(ft)
         log.cpu_load.append(_num(row[i_cpu]) if i_cpu is not None and i_cpu < len(row) else None)
         log.gpu_load.append(_num(row[i_gpu]) if i_gpu is not None and i_gpu < len(row) else None)
+    log.repaired = _repair_frametimes(log)
     return log
+
+
+def _repair_frametimes(log):
+    """MangoHud occasionally writes a garbage frametime (seen: 37,337,300 ms in a 20 s window). A frame cannot take
+    much longer than the time between its row and the previous one, so a value more than 2x that gap (+50 ms) is
+    replaced by the gap. Returns the number of frames repaired."""
+    n = 0
+    for i in range(1, len(log.elapsed)):
+        gap_ms = (log.elapsed[i] - log.elapsed[i - 1]) * 1000
+        if gap_ms >= 0 and log.frametime[i] > 2 * gap_ms + 50:
+            log.frametime[i] = gap_ms
+            n += 1
+    return n
 
 
 def find_logs(folder, since=None):
