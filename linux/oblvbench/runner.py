@@ -233,12 +233,14 @@ class Runner:
             raise RuntimeError(f"OblivionPerfFix.ini not found in {p.win64}: install the fix first (linux/README.md)")
         if not shutil.which(o.steam):
             raise RuntimeError(f"'{o.steam}' not on PATH")
+        leftovers = self.clear_leftovers()
 
         self.result = {
             "label": o.label, "time": time.strftime("%Y-%m-%d %H:%M:%S"), "scenario": scn["name"],
             "start": self.start_mode, "fix": fix_mode, "profile": dict(self.prof, name=self.profile_name),
             "pinned": bool(self.pin_on), "platform": "linux-proton", "frameSource": "mangohud",
             "scenesSelected": [s["id"] for s in scenes], "timeLimitMin": limit_min,
+            "leftovers": leftovers,
         }
         self.announce(scenes, estimate, fix_mode, limit_min)
 
@@ -251,6 +253,7 @@ class Runner:
         installed_here = False
         interrupted = False
         outcome = "failed"
+        crashed = False
         try:
             if guard.has_pending():
                 self.say(f"restoring files left by an earlier run: {guard.restore()}")
@@ -307,6 +310,7 @@ class Runner:
         except (GameDown, Deadline, NeedsUser, BenchError, RuntimeError, OSError) as e:
             self.warn(f"run stopped: {type(e).__name__}: {e}")
             self.result["error"] = f"{type(e).__name__}: {e}"
+            crashed = isinstance(e, GameDown)
         except KeyboardInterrupt:
             self.warn("run interrupted (Ctrl+C or a stop signal)")
             self.result["error"] = "interrupted"
@@ -314,6 +318,8 @@ class Runner:
         finally:
             self.cleanup(guard, saves, inst, installed_here)
             watcher.stop()
+            if crashed:
+                self.after_crash()
         self.analyse(mh_dir, watcher)
         if (o.diag or fixini.parse_overrides(o.fix_ini).get("OsPageCacheTrace", "0") not in ("0", "")) and fix_mode != "off":
             self.collect_diag(run_dir, p.win64, diag_since if "diag_since" in locals() else 0)
@@ -377,6 +383,34 @@ class Runner:
         from .report import run_report
         (run_dir / "report.md").write_text(run_report(self.result))
 
+    # ------------------------------------------------------------ leftovers of earlier sessions
+
+    def clear_leftovers(self):
+        """Before a launch: a crashed session (crash reporter, Steam's reaper for the app) makes Steam wait in
+        WaitingPrevProcess, so the launch would time out. Refuses while the game itself runs."""
+        try:
+            res = game.reap_session(self.say)
+        except game.LiveGameError as e:
+            raise RuntimeError(str(e))
+        if not res["reaperGone"]:
+            raise RuntimeError("Steam's reaper for AppId 2623190 is still running after the crash reporter was ended: "
+                               "Steam would wait in WaitingPrevProcess; end the leftover session by hand (see the log)")
+        return res
+
+    def after_crash(self):
+        """After a GameDown: the crash folder the game wrote, then the crash reporter and the session are cleared so
+        the window does not stay on the desktop."""
+        since = getattr(self, "launch_wall", 0) - 1
+        self.result["crashReport"] = game.newest_crash_folder(self.paths.saved / "Crashes", since)
+        if self.result["crashReport"]:
+            self.say(f"crash report: {self.result['crashReport']}")
+        try:
+            self.result["leftoversAfterCrash"] = game.reap_session(self.say)
+        except game.LiveGameError as e:
+            self.warn(f"clean-up after the crash: {e}")
+        except Exception as e:
+            self.warn(f"clean-up after the crash: {e}")
+
     # ------------------------------------------------------------ start-up
 
     def set_window_config(self, guard):
@@ -403,6 +437,7 @@ class Runner:
     def launch(self, marker):
         self.say("starting the game through Steam (steam://rungameid)")
         self.launch_wall = time.time()
+        self.steam_log_pos = game.steam_log_size()
         game.launch_via_steam(self.o.steam)
         asked = 1
         end = time.monotonic() + self.o.launch_timeout
@@ -411,8 +446,13 @@ class Runner:
             if pid:
                 break
             if time.monotonic() > end:
-                raise RuntimeError(f"the game process did not appear within {self.o.launch_timeout:.0f} s "
-                                   "(is Steam running? did it show a dialog?)")
+                msg = (f"the game process did not appear within {self.o.launch_timeout:.0f} s "
+                       "(is Steam running? did it show a dialog?)")
+                if game.waiting_prev_process(game.steam_log_since(self.steam_log_pos)):
+                    self.result["steamWaitingPrevProcess"] = True
+                    msg += ("; Steam reports WaitingPrevProcess: a previous session of the game is still open "
+                            "(its reaper for AppId 2623190 and the crash reporter, see the log above)")
+                raise RuntimeError(msg)
             if asked < 2 and time.monotonic() - (end - self.o.launch_timeout) > 60:
                 game.launch_via_steam(self.o.steam)     # Steam sometimes drops the first request
                 asked += 1
