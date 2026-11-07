@@ -216,8 +216,9 @@ struct Config {
                                          // an Engine.ini value wins; 0 = the game's value; both routes; start-up only
     int osPageCache = 1;                 // OsPageCache: blocks the allocator releases to Windows are kept (exact size, bounded) and
                                          // handed out again for its own cache misses (identical; start-up install, then live)
-    int osPageCacheMB = 64;              // not in the shipped ini: OsPageCache's cap (MB, 4-1024)
-    int osPageCacheTrimSeconds = 5;      // not in the shipped ini: OsPageCache releases blocks unused this long (s)
+    int osPageCacheMB = 64;              // OsPageCacheMB: OsPageCache's cap (MB, 4-1024)
+    int osPageCacheTrimSeconds = 5;      // not in the shipped ini: OsPageCache releases blocks unused this long (s); OsPageCacheKeepMs wins
+    int osPageCacheKeepMs = 0;           // OsPageCacheKeepMs: OsPageCache releases blocks unused this long (ms, 100-600000); 0 = OsPageCacheTrimSeconds
     int animTeardownParallel = 1;        // AnimTeardownParallel: dying NPC animation data's interpolators
                                          // destroyed on helper threads, joined before the actor's clean-up goes on (start-up
                                          // install when not 0, then live): 0 off, 1 on
@@ -231,6 +232,8 @@ struct Config {
     int psoPrecompileColdQueue = 1000;   // PsoPrecompileColdQueue: once this many pipelines wait (a cold driver cache), the game's own
                                          // pace for the rest of the precompile (0 = no cold-cache guard at all: no queue,
                                          // driver-thread or 60 s limit; live)
+    bool psoColdGuardWine = true;        // PsoColdGuardWine: under Wine (no driver threads visible) the cold-cache guard also watches
+                                         // whether UE's pipeline queue is draining (live; no effect on Windows)
     bool psoPrecompileFastInGameMenus = false;  // PsoPrecompileFastInGameMenus: also Fast in menus once play has started
                                          // (inventory, map, dialogue, pause); 0 = the game's pace there (live)
     int physicsPushParallel = 1;       // PhysicsPushParallel: the physics side of the push of new static bodies: 0 off, 1 batch creation +
@@ -310,6 +313,8 @@ struct Config {
                                        // integrated GPUs, APUs, handhelds) the memory-keeping fixes act as the game; 2 = when the
                                        // game's GPU is one, on Windows itself (not Wine/Proton/CrossOver) with under 20 GB of RAM
                                        // installed; 1 = always (test on any PC), 0 = never; live
+    bool sharedMemoryGpuWine = true;   // SharedMemoryGpuWine: under Wine/Proton the GPU is asked too, so a UMA GPU (Steam Deck, APUs)
+                                       // counts for SharedMemoryGpu=2; a discrete GPU changes nothing; live
     bool navmeshBuildNoBusyWait = true; // NavmeshBuildNoBusyWait: navmesh tile builds never run inside another task's busy wait
     bool busyWaitFlagCheck = true;      // BusyWaitFlagCheck: a busy-waiting worker checks every task it picks up (UE 5.3 checks only the
                                         // first): tasks that must not run inside busy waits (NavmeshBuildNoBusyWait's tiles) never do; live
@@ -323,6 +328,11 @@ struct Config {
     int statsIntervalSeconds = 60;     // 0 = no periodic stats in the log
 };
 Config LoadConfig(const wchar_t* iniPath);
+// The monitor thread's per-second read: parses the ini into *cfg only when its size or last-write time changed (or the
+// file changed within the last 2 s, or *cfg was never read); returns true when it parsed.
+bool LoadConfigIfChanged(const wchar_t* iniPath, Config* cfg);
+// Running under Wine (Proton, CrossOver): ntdll exports wine_get_version. Asked once, cached.
+bool IsWine();
 
 // ---- streaming/nav_link_fast.cpp (NavLinkFast) ----
 bool InstallNavLinkFast(bool beforeGameCode, int mode);  // findConnectingPolys' and connectExtLinks' calls redirected (start-up only)
@@ -912,7 +922,7 @@ void ConvertR10G10B10A2ToColor(uint32_t width, uint32_t height, const uint8_t* i
 
 // screenshot_parallel.cpp (ScreenshotParallel: the menu screenshot's copies into fresh 33 MB arrays, one thread each)
 bool InstallOsPageCache(bool beforeGameCode, const wchar_t* traceDir, int trace);  // os_page_cache.cpp: the OS thunks' detours (start-up)
-void SetOsPageCache(int mode, int capMB, int trimSeconds, bool relief);  // OsPageCache, live (1-second tick): also trims unused blocks
+void SetOsPageCache(int mode, int capMB, int trimSeconds, bool relief, int keepMs = 0);  // OsPageCache, live (1-second tick): also trims unused blocks
 void LogOsPageCacheStats();
 struct OsPageCacheStatsOut {
     uint64_t hits, misses, kept, passed, evictCap, evictSize, trimmed, flushed, allocFails, held;
@@ -964,6 +974,8 @@ void PsoPrecompileTestTiming(uint32_t fastMaxMs, uint32_t driverRetryMs);  // se
 void SetPsoPrecompileFastBudget(float ms, int coldQueue);  // live: render-thread ms per frame at the faster pace; the queue that
                                                            // means a cold driver cache (0: no cold-cache guard at all)
 void PsoPrecompileTestStatics(uint32_t* batchSize, float* batchTime, int64_t* active);  // self-test: fakes for the statics
+void SetPsoColdGuardWine(bool on);             // live: PsoColdGuardWine (queue-trend guard; only acts under Wine)
+void PsoPrecompileTestQueueTrend(int64_t queued);  // self-test: one second's reading of UE's queue depth (the Wine guard)
 void PsoPrecompileWatchDriver();               // monitor thread, once a second: the driver's compile threads (cold-cache guard)
 void PsoPrecompileTestDriverBusy(double cores);  // self-test: one second's reading of the driver's compile threads
 int PsoPrecompileTestOwnThreads(uint32_t* mainThread);  // self-test: this process's threads (NtQuerySystemInformation) and the first one

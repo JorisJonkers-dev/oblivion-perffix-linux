@@ -99,6 +99,18 @@ std::atomic<bool> g_relief{false};
 std::atomic<uint64_t> g_cap{64ull << 20}, g_trimMs{5000};
 std::atomic<uint64_t> g_hits{0}, g_hitBytes{0}, g_misses{0}, g_missBytes{0}, g_puts{0}, g_passed{0}, g_evictCap{0},
     g_evictSize{0}, g_evictRoom{0}, g_trimmed{0}, g_flushed{0}, g_allocFails{0};
+// Per size class (log2 of the block size, 4 KB = 0 ... 16 MB and up = 12): where the hits and misses fall, to tune the cap.
+constexpr int kClasses = 13;
+struct ClassStats {
+    std::atomic<uint64_t> hits{0}, misses{0}, kept{0}, passed{0};
+};
+ClassStats g_class[kClasses];
+int ClassOf(uint64_t size)
+{
+    int c = 0;
+    for (uint64_t v = size >> 12; v > 1 && c < kClasses - 1; v >>= 1) ++c;
+    return c;
+}
 const void* g_cacheRet[2] = {};  // AllocateImpl's two cache-miss calls (return addresses)
 int g_mode = 0;
 
@@ -255,10 +267,12 @@ void* AllocCore(SIZE_T size, bool cachePath)
     if (cachePath && g_on.load(std::memory_order_relaxed)) {
         if (void* p = Take(size)) {
             g_hits.fetch_add(1, std::memory_order_relaxed);
+            g_class[ClassOf(size)].hits.fetch_add(1, std::memory_order_relaxed);
             g_hitBytes.fetch_add(size, std::memory_order_relaxed);
             return p;
         }
         g_misses.fetch_add(1, std::memory_order_relaxed);
+        g_class[ClassOf(size)].misses.fetch_add(1, std::memory_order_relaxed);
         g_missBytes.fetch_add(size, std::memory_order_relaxed);
     }
     void* p = g_osAlloc(size);
@@ -275,9 +289,11 @@ BOOL FreeCore(void* ptr, SIZE_T size)
     if (g_on.load(std::memory_order_relaxed)) {
         if (Put(ptr, size)) {
             g_puts.fetch_add(1, std::memory_order_relaxed);
+            g_class[ClassOf(size)].kept.fetch_add(1, std::memory_order_relaxed);
             return TRUE;
         }
         g_passed.fetch_add(1, std::memory_order_relaxed);
+        g_class[ClassOf(size)].passed.fetch_add(1, std::memory_order_relaxed);
     }
     return g_osFree(ptr);
 }
@@ -381,22 +397,25 @@ bool InstallOsPageCache(bool beforeGameCode, const wchar_t* traceDir, int trace)
 }
 
 // Live (main's 1-second tick): the key, the hidden cap / trim keys, MemoryRelief's RAM/commit relief; trims old blocks.
-void SetOsPageCache(int mode, int capMB, int trimSeconds, bool relief)
+void SetOsPageCache(int mode, int capMB, int trimSeconds, bool relief, int keepMs)
 {
     if (!g_installed) return;
     const uint64_t cap = static_cast<uint64_t>((std::clamp)(capMB, 4, 1024)) << 20;
     g_cap.store(cap, std::memory_order_relaxed);
-    g_trimMs.store(static_cast<uint64_t>((std::clamp)(trimSeconds, 1, 600)) * 1000, std::memory_order_relaxed);
+    // OsPageCacheKeepMs (100 ms - 10 min) wins over the older OsPageCacheTrimSeconds
+    const uint64_t keep = keepMs > 0 ? static_cast<uint64_t>((std::clamp)(keepMs, 100, 600000))
+                                     : static_cast<uint64_t>((std::clamp)(trimSeconds, 1, 600)) * 1000;
+    g_trimMs.store(keep, std::memory_order_relaxed);
     const bool on = mode != 0 && !relief;
     if (relief != g_relief.exchange(relief) && mode)
         Log("[oscache] %s", relief ? "Windows is short of RAM or commit: the kept blocks go back, released blocks go to Windows"
                                    : "memory recovered: released blocks are kept again");
     static int lastCap = -1, lastTrim = -1;
-    if (mode != g_mode || (mode && (capMB != lastCap || trimSeconds != lastTrim)))
-        Log("[oscache] %s (cap %llu MB, unused blocks released after %llu s)", mode ? "on: released OS blocks are kept for reuse" : "off: as the game",
-            static_cast<unsigned long long>(cap >> 20), static_cast<unsigned long long>(g_trimMs.load() / 1000));
+    if (mode != g_mode || (mode && (capMB != lastCap || static_cast<int>(keep) != lastTrim)))
+        Log("[oscache] %s (cap %llu MB, unused blocks released after %llu ms)", mode ? "on: released OS blocks are kept for reuse" : "off: as the game",
+            static_cast<unsigned long long>(cap >> 20), static_cast<unsigned long long>(keep));
     lastCap = capMB;
-    lastTrim = trimSeconds;
+    lastTrim = static_cast<int>(keep);
     g_on.store(on);
     g_mode = mode;
     if (!on) g_flushed.fetch_add(Release(0), std::memory_order_relaxed);
@@ -435,6 +454,19 @@ void LogOsPageCacheStats()
         static_cast<unsigned long long>(g_evictRoom.load()), static_cast<unsigned long long>(g_trimmed.load()),
         static_cast<unsigned long long>(g_flushed.load()), static_cast<unsigned long long>(g_allocFails.load()), g_cache->count,
         g_cache->held / 1048576.0, g_cache->peak / 1048576.0);
+    // per size class (cumulative): hits, misses, kept, passed (released to Windows); hit% = hits / (hits + misses)
+    char line[512];
+    int n = 0;
+    for (int i = 0; i < kClasses; ++i) {
+        const uint64_t h = g_class[i].hits.load(), m = g_class[i].misses.load(), k = g_class[i].kept.load(), p = g_class[i].passed.load();
+        if (!(h | m | k | p) || n > 400) continue;
+        const unsigned long long kb = 4ull << i;
+        n += snprintf(line + n, sizeof line - n, "%s%llu%s: hit %llu/miss %llu (%.0f%%) kept %llu passed %llu", n ? "; " : "",
+                      kb >= 1024 ? kb / 1024 : kb, kb >= 1024 ? " MB" : " KB", static_cast<unsigned long long>(h),
+                      static_cast<unsigned long long>(m), h + m ? 100.0 * h / (h + m) : 0.0, static_cast<unsigned long long>(k),
+                      static_cast<unsigned long long>(p));
+    }
+    if (n) Log("[oscache] by size: %s", line);
 }
 
 bool OsPageCacheInfo(OsPageCacheInfoOut* out)
@@ -465,6 +497,7 @@ void OsPageCacheTestInit(void* (*osAlloc)(SIZE_T), BOOL (*osFree)(void*), uint64
     for (auto* s : {&g_hits, &g_hitBytes, &g_misses, &g_missBytes, &g_puts, &g_passed, &g_evictCap, &g_evictSize, &g_evictRoom,
                     &g_trimmed, &g_flushed, &g_allocFails})
         s->store(0);
+    for (auto& c : g_class) c.hits = c.misses = c.kept = c.passed = 0;
 }
 void* OsPageCacheTestAlloc(size_t size, bool cachePath) { return AllocCore(size, cachePath); }
 BOOL OsPageCacheTestFree(void* ptr, size_t size) { return FreeCore(ptr, size); }

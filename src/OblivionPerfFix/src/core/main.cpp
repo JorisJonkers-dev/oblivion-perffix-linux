@@ -125,9 +125,11 @@ bool TranslateWanted(const Config& cfg, bool sharedGpu, unsigned seconds)
 
 DWORD WINAPI MonitorThread(LPVOID)
 {
+    Config cached = LoadConfig(g_iniPath.c_str());
     for (unsigned seconds = 1;; ++seconds) {
         Sleep(1000);
-        const Config cfg = LoadConfig(g_iniPath.c_str());
+        LoadConfigIfChanged(g_iniPath.c_str(), &cached);  // parses only when the ini's size or time changed
+        const Config cfg = cached;
         // MemoryRelief: while Windows is short of memory, the fixes that keep memory on purpose give it back.
         MemoryRelief relief;
         UpdateMemory(cfg, &relief);
@@ -216,11 +218,13 @@ DWORD WINAPI MonitorThread(LPVOID)
         if (g_npcBodies) SetNpcBodiesOneLock(cfg.npcBodiesOneLock);  // NpcBodiesOneLock: live once installed
         SetRtSceneKeep(relief.shared && cfg.rtSceneBufferKeep ? 2 : cfg.rtSceneBufferKeep);  // RtSceneBufferKeep: live once installed (no-op otherwise); 2 = the game's way
         SetRayTracingBuildBatch(cfg.rayTracingBuildBatch);  // RayTracingBuildBatch: live once installed (no-op otherwise)
-        SetOsPageCache(relief.shared ? 0 : cfg.osPageCache, cfg.osPageCacheMB, cfg.osPageCacheTrimSeconds, relief.osCache);  // OsPageCache: no-op unless installed
+        SetOsPageCache(relief.shared ? 0 : cfg.osPageCache, cfg.osPageCacheMB, cfg.osPageCacheTrimSeconds, relief.osCache,
+                       cfg.osPageCacheKeepMs);  // OsPageCache: no-op unless installed
         SetPsoPrecompileFast(cfg.psoPrecompileFast);  // PsoPrecompileFast: no-op unless installed at start-up
         SetPsoPrecompileFastInGameMenus(cfg.psoPrecompileFastInGameMenus);
         SetPsoPrecompileFastBudget(static_cast<float>(cfg.psoPrecompileFastBudgetMs < 1 ? 1 : cfg.psoPrecompileFastBudgetMs),
                                    cfg.psoPrecompileColdQueue < 0 ? 0 : cfg.psoPrecompileColdQueue);
+        SetPsoColdGuardWine(cfg.psoColdGuardWine);
         PsoPrecompileWatchDriver();  // the cold-cache guard's driver-thread reading (no-op unless installed and precompiling)
         SetAnimTeardownParallel(ParallelHelpersAllowed(cfg) ? cfg.animTeardownParallel : 0);    // AnimTeardownParallel: no-op unless installed at start-up
         SetCellBufferPacedEvict(cfg.cellBufferPacedEvict);    // CellBufferPacedEvict: no-op unless installed at start-up
@@ -508,7 +512,7 @@ void Init(const char* loadedVia, bool proxyOk, bool beforeGameCode)
     const int osTrace = 0;
     if (cfg.osPageCache || osTrace) {
         if (InstallOsPageCache(beforeGameCode, Directory(g_iniPath).c_str(), osTrace))
-            SetOsPageCache(cfg.osPageCache, cfg.osPageCacheMB, cfg.osPageCacheTrimSeconds, false);
+            SetOsPageCache(cfg.osPageCache, cfg.osPageCacheMB, cfg.osPageCacheTrimSeconds, false, cfg.osPageCacheKeepMs);
     } else Log("[oscache] disabled in OblivionPerfFix.ini (takes a restart to switch on)");
     // PsoPrecompileFast: SetBatchMode's entry detour, installed only if enabled at startup; afterwards the ini switches it live.
     if (cfg.psoPrecompileFast) {

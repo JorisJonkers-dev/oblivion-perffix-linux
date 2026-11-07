@@ -117,6 +117,17 @@ static void Run(const GameModule& game)
     void* c3 = OsPageCacheTestAlloc(K64, true);
     OsPageCacheTestFree(c3, K64);
     Check(S().blocks == 1, "relief over: kept again");
+    // OsPageCacheKeepMs (wins over the seconds key): 500 ms
+    g_now += 400;
+    SetOsPageCache(1, 64, 5, false, 500);
+    Check(S().blocks == 1, "OsPageCacheKeepMs=500: a block 0.4 s old stays");
+    g_now += 200;
+    SetOsPageCache(1, 64, 5, false, 500);
+    Check(S().blocks == 0, "OsPageCacheKeepMs=500: a block 0.6 s old went to the OS (not after 5 s)");
+    void* c5 = OsPageCacheTestAlloc(K64, true);
+    OsPageCacheTestFree(c5, K64);
+    SetOsPageCache(1, 64, 5, false);
+    Check(S().blocks == 1, "KeepMs back to 0: the seconds key (5 s) rules again");
     // a failed allocation: what is kept goes back, then once more
     g_failNext = true;
     void* c4 = OsPageCacheTestAlloc(K128, true);

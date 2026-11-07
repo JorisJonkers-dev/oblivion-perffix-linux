@@ -359,6 +359,22 @@ static void Run(const GameModule& game)
     running(false);
     tick();
 
+    // PsoColdGuardWine: UE's queue is watched for a trend (no driver threads are visible under Wine)
+    fresh();
+    PsoPrecompileTestQueueTrend(100);
+    for (int i = 0; i < 10; ++i) PsoPrecompileTestQueueTrend(240);
+    tick();
+    Check(lastMode == 1 && !now().cold, "queue trend: a small queue (under 250) never trips the guard, however long it stays");
+    for (int64_t q : {900, 700, 500, 600, 700, 500, 300, 350}) PsoPrecompileTestQueueTrend(q);
+    tick();
+    Check(lastMode == 1 && !now().cold, "queue trend: a queue that keeps draining (or not for under 6 s) does not trip it");
+    for (int64_t q : {400, 420, 440, 460, 480, 500}) PsoPrecompileTestQueueTrend(q);
+    tick();
+    Check(lastMode == 0 && now().cold && strstr(now().coldWhy, "queue trend") == now().coldWhy,
+          "queue trend: 6 s of a queue over 250 that does not drain -> the game's own pace");
+    running(false);
+    tick();
+
     // the first precompile keeps a cold verdict the monitor thread made before the game thread's first look
     PsoPrecompileTestOriginal(reinterpret_cast<void*>(&FakeSetBatchMode));
     PsoPrecompileTestStatics(&fakeSize, &fakeTime, &fakeActive);

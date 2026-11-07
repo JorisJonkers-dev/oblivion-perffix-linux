@@ -474,6 +474,8 @@ ms, frames of 25 ms or more 17-22 -> 12-14.
 
 [Evidence](research.md#ospagecache).
 
+*Tuning (Proton / any PC):* the cap and the keep time are the keys `OsPageCacheMB` (default 64) and `OsPageCacheKeepMs` (default 5000). The stats line also prints hits, misses, kept and released blocks per size class (`[oscache] by size`), because on the Linux test runs only 17-44% of requests were hits with ~10,000 releases over the cap; whether a bigger cap helps is for an A/B run to say, so the default is unchanged.
+
 **The problem.** Unreal's memory manager gets its memory from Windows in blocks (64 KB pages for small objects, and
 blocks of up to 16 MB for bigger arrays). When a block is no longer needed it goes onto a short list of spare blocks,
 and the next request of exactly that size takes one from the list. The list holds only 64 blocks. With many threads and
@@ -1313,6 +1315,8 @@ you walk away, switch it off.
 ### Start-up shaders built faster in menus (`PsoPrecompileFast`)
 
 [Evidence](research.md#psoprecompilefast).
+
+*Under Wine / Proton:* the guard's driver-thread check looks for threads named "D3D Background Thread" in the Windows thread list. Mesa's / vkd3d-proton's compile threads are Linux threads that Wine does not list, so every Proton run logged "no driver compile threads found" and that check never worked. `PsoColdGuardWine=1` (default, Wine only) replaces it with a proxy: UE's own queue of fetched, not yet dispatched pipelines (warm-cache runs peak at 86-120) is read once a second, and a queue of at least 250 that did not shrink by 5% in any of 6 seconds in a row marks the precompile slow, handing the game its own pace as the other guards do. No reliable direct signal for the Mesa/Fossilize compile exists on the Windows side, so this is a guess to be checked on a cold cache (`rm` the Mesa shader cache and the game's `vkd3d` pipeline cache, run, read the `[pso]` lines); a wrong verdict only gives up the faster pace.
 
 **The problem.** After every start the game builds about 18,000 graphics pipelines (each a combination of shaders and
 render states it will draw with: 15,551 from the game's own list, then 2,536 from a second list, most likely the one the
@@ -2192,6 +2196,8 @@ as the game does, the automatic parallel translation stays off, and
 `CommandAllocatorTrim` gives spare command memory back after every load. The log says what it found and why. `SharedMemoryGpu=0`
 turns this off, `1` forces it on any PC.
 
+*Under Wine / Proton:* the question was skipped there (Linux handles low memory its own way). Since `SharedMemoryGpuWine=1` (default) it is asked under Wine too, because vkd3d-proton answers `D3D12_FEATURE_ARCHITECTURE1`; a Steam Deck or APU then counts as UMA, and a discrete card (RX 7900 XTX) answers "not UMA" and nothing changes. `SharedMemoryGpuWine=0` restores the old skip.
+
 **Why the image can't change.** The fixes involved only keep or give back memory; with this they take the game's own
 paths, which draw the same picture.
 
@@ -2284,6 +2290,10 @@ overflow, ...) on that thread: it writes the stage number, the stage in progress
 numbers and the call stack as `exe+offset` to the log, then lets the exception go on to the game's own handling as if it had
 not been there (the first line says that the fault may be one the game handles itself). Start-up only (`version.dll` install),
 then the ini switches recording and the handler live; with both at 0 nothing is installed.
+
+### The ini is read only when it changes
+
+Switching a key live works by a monitor thread that once a second re-reads `OblivionPerfFix.ini`. Reading ~114 keys one by one opens and parses the file each time (Windows' `GetPrivateProfileInt`), which under Wine / Proton is a round trip to the wineserver per key, about 114 a second for nothing while the file does not change. Now the thread asks Windows once a second for the file's size and last-write time (`GetFileAttributesExW`) and parses it only when one of them changed. A file written within the last 2 seconds is parsed again regardless, so an editor still writing, or a coarse timestamp, can never leave half a file in force. A change still lands within about a second; a missing ini keeps the defaults and is not retried every second. Always on, no key; a pure saving of work with the same values.
 
 ## All together (Cheydinhal, 720p, FSR Performance, frame generation off)
 

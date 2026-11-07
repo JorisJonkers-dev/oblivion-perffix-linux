@@ -50,7 +50,7 @@
 // OsPageCache off), RdgParallelTranslate's automatic mode stays off, and CommandAllocatorTrim counts as "tight" (spare
 // copy allocators handed back after loads: less than the game keeps). Until the answer is in (seconds after the device is
 // made, before any world loads) the automatic parallel translate waits; the keeps start as configured.
-// The automatic mode (2) is narrower than "UMA" (decided 2026-10-31): only on Windows itself, not under Wine
+// The automatic mode (2) was narrower than "UMA" (decided 2026-10-31): only on Windows itself, not under Wine (now SharedMemoryGpuWine=0)
 // (Proton on Linux and the Steam Deck, CrossOver on Apple Silicon Macs: ntdll exports wine_get_version there; those
 // systems handle running out of RAM their own way: macOS compressing and swapping, Linux's OOM killer ending the game),
 // and only with less than 20 GB of RAM installed. 20 GB: handhelds and APU laptops come with 16, 24 or 32 GB; the
@@ -58,7 +58,7 @@
 // module size give or take a little, and 20 lies half way between 16 and 24: the 16 GB Ally / Legion Go / Claw are in,
 // the 24 GB Ally X (where players report the fixes working well) and bigger APUs keep the fixes. When the installed size
 // is not available Windows' total is used (the carve-out not counted: a 24 GB device giving the GPU 4 GB or more would
-// then count as small, the safe side). Under Wine the device is not asked at all.
+// then count as small, the safe side). Under Wine the device is asked all the same (vkd3d-proton answers D3D12_FEATURE_ARCHITECTURE1; SharedMemoryGpuWine=1, the default, so a Steam Deck / APU counts as UMA and a discrete card changes nothing); with SharedMemoryGpuWine=0 it is not asked and Wine keeps the old rule.
 // SharedMemoryGpu=0 keeps the fixes as on a GPU with its own memory, 1 acts as on a shared-memory GPU on any PC (how the
 // path is tested on a desktop). Live; one log line per change, naming the reasons (UMA, Wine, RAM).
 #include "common.h"
@@ -234,6 +234,8 @@ void OpenAdapter()
 // ---- SharedMemoryGpu: does the game's GPU use system RAM? ----
 
 std::atomic<int> g_gpuKind{static_cast<int>(GpuMemoryKind::Pending)};
+std::atomic<bool> g_wineAsksGpu{true};  // SharedMemoryGpuWine (UpdateMemory sets it each second)
+bool g_skippedUnderWine = false;        // the GPU was not asked because SharedMemoryGpuWine was 0 (monitor thread)
 
 // "UMA yes, Wine no, RAM 16.0 GB installed: applies" and the like, for the log lines.
 void SharedGpuReasons(int mode, GpuMemoryKind kind, const SharedGpuHost& host, char* out, size_t size)
@@ -243,15 +245,15 @@ void SharedGpuReasons(int mode, GpuMemoryKind kind, const SharedGpuHost& host, c
               kind == GpuMemoryKind::Shared      ? "yes"
               : kind == GpuMemoryKind::Dedicated ? "no"
               : kind == GpuMemoryKind::Pending   ? "not asked yet"
-              : host.wine                        ? "not asked (Wine)"
+              : host.wine                        ? "not asked (Wine, SharedMemoryGpuWine=0)"
                                                  : "not known",
-              host.wine ? "yes" : "no", host.ramMB / 1024.0, host.ramInstalled ? "installed" : host.ramMB ? "seen by Windows" : "(not known)",
+              IsWine() ? "yes" : "no", host.ramMB / 1024.0, host.ramInstalled ? "installed" : host.ramMB ? "seen by Windows" : "(not known)",
               mode,
               mode == 1 ? "(forced in the ini) applies"
               : mode == 0 ? "(off in the ini) does not apply"
               : on      ? "(automatic) applies"
               : kind != GpuMemoryKind::Shared ? "(automatic) does not apply: not a UMA GPU"
-              : host.wine ? "(automatic) does not apply: under Wine"
+              : host.wine ? "(automatic) does not apply: under Wine with SharedMemoryGpuWine=0"
                           : "(automatic) does not apply: 20 GB of RAM or more");
 }
 
@@ -270,6 +272,7 @@ void DetectGpuMemoryKind(int mode)
     ID3D12Device* d = nullptr;
     GpuMemoryKind kind = GpuMemoryKind::Unknown;
     bool coherent = false, own = false;
+    g_skippedUnderWine = host.wine;
     if (!host.wine && create && SUCCEEDED(create(g_adapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&d))) && d) {
         const ULONG refs = d->AddRef();
         d->Release();
@@ -284,7 +287,7 @@ void DetectGpuMemoryKind(int mode)
         "system %.2f GB, budget %.2f GB local / %.2f GB non-local; %s",
         kind == GpuMemoryKind::Shared      ? "system RAM (UMA)"
         : kind == GpuMemoryKind::Dedicated ? "its own video memory"
-        : host.wine                        ? "not asked under Wine"
+        : host.wine                        ? "not asked under Wine (SharedMemoryGpuWine=0)"
                                            : "not known (treated as a GPU with its own memory)",
         kind == GpuMemoryKind::Unknown ? " not answered" : coherent ? ", cache-coherent" : "", own ? ", asked on a new device" : "",
         desc.DedicatedVideoMemory / kGB, desc.DedicatedSystemMemory / kGB, desc.SharedSystemMemory / kGB, local.Budget / kGB,
@@ -338,8 +341,6 @@ SharedGpuHost SharedGpuHostFacts()
 {
     static const SharedGpuHost facts = [] {
         SharedGpuHost f;
-        HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
-        f.wine = ntdll && GetProcAddress(ntdll, "wine_get_version") != nullptr;
         using InstalledFn = BOOL(WINAPI*)(PULONGLONG kb);
         const auto installed = reinterpret_cast<InstalledFn>(
             GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "GetPhysicallyInstalledSystemMemory"));
@@ -353,7 +354,10 @@ SharedGpuHost SharedGpuHostFacts()
         }
         return f;
     }();
-    return facts;
+    // wine = "Wine and SharedMemoryGpuWine=0": the only case where Wine keeps the automatic rule off and the GPU unasked.
+    SharedGpuHost out = facts;
+    out.wine = IsWine() && !g_wineAsksGpu.load(std::memory_order_relaxed);
+    return out;
 }
 
 bool SharedMemoryGpuPossible(int mode, bool wine, uint64_t ramMB)
@@ -971,6 +975,11 @@ bool InstallGpuCrashReport()
 void UpdateMemory(const Config& cfg, MemoryRelief* relief)
 {
     OpenAdapter();
+    g_wineAsksGpu = cfg.sharedMemoryGpuWine;
+    if (g_skippedUnderWine && cfg.sharedMemoryGpuWine) {  // switched on live: ask now
+        g_skippedUnderWine = false;
+        g_gpuKind = static_cast<int>(GpuMemoryKind::Pending);
+    }
     DetectGpuMemoryKind(cfg.sharedMemoryGpu);
     Sample s = TakeSample();
     g_lastVram.store(s.vram, std::memory_order_relaxed);

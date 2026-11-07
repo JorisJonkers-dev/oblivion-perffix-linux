@@ -5057,9 +5057,17 @@ int wmain(int argc, wchar_t** argv)
                   !SharedMemoryGpuWanted(2, GpuMemoryKind::Shared, false, 32 * 1024) &&
                   !SharedMemoryGpuWanted(2, GpuMemoryKind::Shared, true, 16 * 1024) &&
                   !SharedMemoryGpuWanted(2, GpuMemoryKind::Dedicated, false, 16 * 1024),
-              "SharedMemoryGpu=2: a 16 GB Windows handheld yes; a 24 GB Ally X, a 32 GB APU, Proton/CrossOver (Wine), a graphics card no");
+              "SharedMemoryGpu=2: a 16 GB handheld yes; a 24 GB Ally X, a 32 GB APU, Wine with SharedMemoryGpuWine=0, a graphics card no");
+        Check(Config().sharedMemoryGpuWine && Config().psoColdGuardWine && Config().osPageCacheKeepMs == 0,
+              "defaults: SharedMemoryGpuWine=1, PsoColdGuardWine=1, OsPageCacheKeepMs=0 (the seconds key)");
         const SharedGpuHost host = SharedGpuHostFacts();
-        Check(!host.wine && host.ramMB >= 1024, "SharedMemoryGpu: this PC is Windows itself (no wine_get_version) and its RAM is known");
+        if (IsWine()) {
+            printf("SKIP  SharedMemoryGpu: this PC is Windows itself (no wine_get_version): not asserted under Wine/Proton\n");
+            Check(host.ramMB >= 1024, "SharedMemoryGpu: its RAM is known (under Wine)");
+            Check(!host.wine, "SharedMemoryGpuWine=1 (default): Wine does not keep the GPU unasked");
+        } else {
+            Check(!host.wine && host.ramMB >= 1024, "SharedMemoryGpu: this PC is Windows itself (no wine_get_version) and its RAM is known");
+        }
         Check(!SharedMemoryGpuWaitForAnswer(0) && !SharedMemoryGpuWaitForAnswer(1) &&
                   SharedMemoryGpuWaitForAnswer(2) == (host.ramMB < kSharedGpuMaxRamMB),
               "RdgParallelTranslate=2 waits for the GPU's answer only where SharedMemoryGpu could apply (not on a 20 GB+ PC)");
@@ -5070,7 +5078,7 @@ int wmain(int argc, wchar_t** argv)
         Check(r.shared && r.upload && r.lumen && !r.translate && !r.osCache,
               "SharedMemoryGpu=2 on a 16 GB UMA Windows PC: UploadMemoryKeep and LumenKeepArrayCapacity as stock, relief.shared set");
         MemoryReliefTestSharedGpu(GpuMemoryKind::Shared, 2, true, 16 * 1024, &r);
-        Check(!r.shared && !r.upload && !r.lumen, "SharedMemoryGpu=2 under Wine (Steam Deck, CrossOver): nothing changes");
+        Check(!r.shared && !r.upload && !r.lumen, "SharedMemoryGpu=2 under Wine with SharedMemoryGpuWine=0: nothing changes (the Steam Deck / CrossOver rule before the key)");
         MemoryReliefTestSharedGpu(GpuMemoryKind::Shared, 2, false, 64 * 1024, &r);
         Check(!r.shared && !r.upload && !r.lumen, "SharedMemoryGpu=2 on a 64 GB UMA PC: nothing changes");
         MemoryReliefTestSharedGpu(GpuMemoryKind::Dedicated, 2, false, 16 * 1024, &r);
@@ -5082,6 +5090,34 @@ int wmain(int argc, wchar_t** argv)
         MemoryReliefTestSharedGpu(GpuMemoryKind::Shared, 0, false, 16 * 1024, &r);
         Check(!r.shared && !r.upload && !r.lumen, "SharedMemoryGpu=0 on a UMA GPU: the fixes as configured");
         Check(GameGpuMemoryKind() == GpuMemoryKind::Pending, "SharedMemoryGpu: the test put the live kind back");
+
+        // The monitor thread's ini read: parsed only when the file changed (size or last-write time) or is under 2 s old
+        {
+            wchar_t tmp[MAX_PATH];
+            GetTempPathW(MAX_PATH, tmp);
+            wcscat_s(tmp, L"opf-selftest-config.ini");
+            const auto writeIni = [&](const char* text) {
+                HANDLE h = CreateFileW(tmp, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+                DWORD w;
+                if (h != INVALID_HANDLE_VALUE) {
+                    WriteFile(h, text, static_cast<DWORD>(strlen(text)), &w, nullptr);
+                    CloseHandle(h);
+                }
+            };
+            writeIni("[Fixes]\r\nOsPageCacheMB=77\r\n");
+            Config c;
+            Check(LoadConfigIfChanged(tmp, &c) && c.osPageCacheMB == 77, "config: the first read parses the ini");
+            Check(LoadConfigIfChanged(tmp, &c), "config: a file written under 2 s ago is parsed again (still being written?)");
+            Sleep(2300);
+            Check(!LoadConfigIfChanged(tmp, &c), "config: unchanged and older than 2 s -> not parsed (the cached values stay)");
+            writeIni("[Fixes]\r\nOsPageCacheMB=99\r\n");
+            Check(LoadConfigIfChanged(tmp, &c) && c.osPageCacheMB == 99, "config: a changed file is parsed within one tick");
+            writeIni("[Fixes]\r\nOsPageCacheMB=1234\r\n");   // longer: the size changed
+            Check(LoadConfigIfChanged(tmp, &c) && c.osPageCacheMB == 1234, "config: a size change is parsed");
+            DeleteFileW(tmp);
+            Check(LoadConfigIfChanged(tmp, &c) && c.osPageCacheMB == Config().osPageCacheMB, "config: a missing ini reads as the defaults");
+            Check(!LoadConfigIfChanged(tmp, &c), "config: ... and a still-missing ini is not re-read every second");
+        }
 
         // CommandAllocatorTrim's tight level: the old rule unchanged without a shared GPU, always tight with one.
         const uint64_t G = 1ull << 30, H = 2 * G;

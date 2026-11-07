@@ -118,6 +118,9 @@ Config LoadConfig(const wchar_t* iniPath)
     c.osPageCache = get(L"Fixes", L"OsPageCache", c.osPageCache);
     c.osPageCacheMB = get(L"Fixes", L"OsPageCacheMB", c.osPageCacheMB);
     c.osPageCacheTrimSeconds = get(L"Fixes", L"OsPageCacheTrimSeconds", c.osPageCacheTrimSeconds);
+    c.osPageCacheKeepMs = get(L"Fixes", L"OsPageCacheKeepMs", c.osPageCacheKeepMs);
+    c.psoColdGuardWine = get(L"Fixes", L"PsoColdGuardWine", c.psoColdGuardWine) != 0;
+    c.sharedMemoryGpuWine = get(L"Fixes", L"SharedMemoryGpuWine", c.sharedMemoryGpuWine) != 0;
     c.psoPrecompileFast = get(L"Fixes", L"PsoPrecompileFast", c.psoPrecompileFast) != 0;
     c.psoPrecompileFastInGameMenus = get(L"Fixes", L"PsoPrecompileFastInGameMenus", c.psoPrecompileFastInGameMenus) != 0;
     c.psoPrecompileFastBudgetMs = get(L"Fixes", L"PsoPrecompileFastBudgetMs", c.psoPrecompileFastBudgetMs);
@@ -172,6 +175,44 @@ Config LoadConfig(const wchar_t* iniPath)
     c.gpuCrashReport = get(L"General", L"GpuCrashReport", c.gpuCrashReport) != 0;
     c.statsIntervalSeconds = get(L"General", L"StatsIntervalSeconds", c.statsIntervalSeconds);
     return c;
+}
+
+bool IsWine()
+{
+    static const bool wine = [] {
+        HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+        return ntdll && GetProcAddress(ntdll, "wine_get_version") != nullptr;
+    }();
+    return wine;
+}
+
+// The ini is re-read only when it changed: every GetPrivateProfileIntW opens and parses the whole file (a wineserver round
+// trip each under Wine, ~114 per second). One GetFileAttributesExW per second says whether size or last-write time moved.
+// A file written within the last 2 s is re-read anyway (an editor may still be writing; coarse timestamps), so a live switch
+// still lands within about a second and a half-written file never sticks.
+bool LoadConfigIfChanged(const wchar_t* iniPath, Config* cfg)
+{
+    static bool have = false, haveStat = false;
+    static ULONGLONG lastWrite = 0, size = 0;
+    WIN32_FILE_ATTRIBUTE_DATA a{};
+    const bool ok = GetFileAttributesExW(iniPath, GetFileExInfoStandard, &a) != 0;
+    ULONGLONG w = 0, sz = 0, nowFt = 0;
+    if (ok) {
+        w = (static_cast<ULONGLONG>(a.ftLastWriteTime.dwHighDateTime) << 32) | a.ftLastWriteTime.dwLowDateTime;
+        sz = (static_cast<ULONGLONG>(a.nFileSizeHigh) << 32) | a.nFileSizeLow;
+        FILETIME now;
+        GetSystemTimeAsFileTime(&now);
+        nowFt = (static_cast<ULONGLONG>(now.dwHighDateTime) << 32) | now.dwLowDateTime;
+    }
+    const bool same = have && ok == haveStat && (!ok || (w == lastWrite && sz == size));
+    const bool fresh = ok && nowFt >= w && nowFt - w < 20000000ull;  // written within 2 s (100 ns units)
+    if (same && !fresh) return false;
+    *cfg = LoadConfig(iniPath);
+    have = true;
+    haveStat = ok;
+    lastWrite = w;
+    size = sz;
+    return true;
 }
 
 }  // namespace opf
