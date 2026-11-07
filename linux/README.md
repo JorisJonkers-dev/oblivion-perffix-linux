@@ -56,7 +56,7 @@ python3 linux/bench.py restore [--ue4ss]                 # put back what a kille
 ```
 
 Options of `run` / `ab`: `--profile` (bench/profiles.json; default the scenario's, else `small`, an 854x480
-window), `--native-res 2560x1440` (what `native` profiles mean), `--start fresh|continue`, `--warmup 60`,
+window), `--native-res 2560x1440` (what `native` profiles mean), `--start fresh|continue`, `--warmup auto|60`,
 `--keep-ue4ss`, `--show-hud`, `--no-pin`, `--no-fixed-seed`, `--max-minutes`, `--stall-sec`, `--detail`,
 `--detail-secs`, `--detail-interval` (below); `ab` also `--a-ini` / `--b-ini` / `--name-a` / `--name-b`.
 
@@ -197,8 +197,14 @@ the numbers from arrival to the end.
 - **No window-hook DLL** (`tools/benchhook`): the game window is on screen and audible, may take the focus when
   it opens, and the NPC conversation guard is missing (a forced greeting can pause the world for the rest of a scene:
   the runner warns when a scene ends in a menu). Don't touch the game while it runs.
-- **Warm-up:** upstream waits for the driver's shader compilation (D3D background thread CPU) and the game's PSO
-  precompile (read from the game's memory); here a fixed `--warmup` (default 60 s) in the world.
+- **Warm-up:** `--warmup auto` (default) waits until `OblivionPerfFix.log` (Win64 folder) has a line written after this
+  launch matching `[pso] +<n> s: shader precompile finished`, min 20 s, cap 240 s. Without the fix hook (`--fix off`,
+  `PsoPrecompileFast=0`) it waits for steady MangoHud frame times (rolling 5 s p95 within 10% for 10 s, cap 240 s),
+  or a fixed 90 s if no frame log is readable. A number of seconds keeps the old fixed wait. The actual seconds and
+  the reason are in `result.json` (`warmup`) and `report.md`.
+- **Diagnostics ranking:** the two ~350 ms sync stalls (`syncStalls` in result.json, with ledger-clock times) are
+  excluded: `diag/stutter_ledger.txt` and `tick_split.txt` rank only the measured scene/slot range without +-1 s
+  around a stall (`diagRange`); `*-unfiltered.txt` and the raw CSVs are kept.
 - **No crash recovery:** a crash, hang or stall ends the run (`partial`/`failed`); upstream restarts the game and
   carries on. No visual pass (screenshots, reference images), no `-Stacks`, `-Record`, `-Watch`, `-Session reuse`,
   no parking at the main menu (every run is a fresh game).

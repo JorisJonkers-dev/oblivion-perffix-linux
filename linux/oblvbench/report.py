@@ -35,6 +35,14 @@ def run_report(r):
            f"- scenario `{r.get('scenario')}`, profile `{(r.get('profile') or {}).get('name')}`, fix **{r.get('fix')}**, "
            f"start {r.get('start')}, pinned {r.get('pinned')}, outcome **{r.get('outcome')}**",
            f"- frames: MangoHud (Proton); {_timing_line(r.get('frameLog'))}", ""]
+    w = r.get("warmup")
+    if w:
+        out.append(f"- warm-up: {w.get('seconds'):g} s ({w.get('mode')}): {w.get('reason')}")
+    dr = r.get("diagRange")
+    if dr:
+        out.append(f"- diagnostics (`diag/*.txt`): {dr.get('note')}")
+    if w or dr:
+        out.append("")
     rows = r.get("scenes") or []
     if rows:
         out.append("| scene | type | s | frames | " + " | ".join(m[1] for m in METRICS) + " |")

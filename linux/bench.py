@@ -25,6 +25,7 @@ from oblvbench.report import load_runs, write_comparison  # noqa: E402
 from oblvbench.runner import Options, Runner  # noqa: E402
 from oblvbench.saves import SaveGuard  # noqa: E402
 from oblvbench.spinrunner import SpinOptions, SpinRunner  # noqa: E402
+from oblvbench.warmup import parse_warmup as warmup_arg  # noqa: E402
 
 
 def say(msg):
@@ -195,7 +196,9 @@ def add_run_args(p):
     p.add_argument("--start", choices=["fresh", "continue"], help="default: the scenario's, else fresh")
     p.add_argument("--profile", help="bench/profiles.json (default: the scenario's, else small)")
     p.add_argument("--label", default="run")
-    p.add_argument("--warmup", type=float, default=60, help="seconds in the world before the first scene (default 60)")
+    p.add_argument("--warmup", type=warmup_arg, default="auto",
+                   help="'auto' (default): wait in the world until the start-up PSO precompile is done (OblivionPerfFix.log; "
+                        "frame-time stability without the fix; min 20 s, cap 240 s), or a number of seconds")
     p.add_argument("--native-res", default="2560x1440", help="what profile res 'native' means (default 2560x1440)")
     p.add_argument("--keep-ue4ss", action="store_true", help="leave UE4SS in the game folder afterwards")
     p.add_argument("--show-hud", action="store_true", help="show the MangoHud overlay (default: logging only)")
@@ -241,7 +244,7 @@ def main(argv=None):
                    help="on/fix: the ini as installed; stock: every switch 0 but FrameRateLimitAtStart; off: DLL not loaded")
     p = sub.add_parser("spin", help="one spot, camera spinning in laps, settings flipped live in ABBA order")
     add_run_args(p)
-    p.set_defaults(scenario="linux-hotspots", warmup=20)
+    p.set_defaults(scenario="linux-hotspots")
     p.add_argument("--scene", help="a static scene of --scenario: its place, hour and weather")
     p.add_argument("--pos", help="x,y,z instead of --scene (with --heading and --world or --cell)")
     p.add_argument("--heading", type=float, help="start heading in degrees (0 = north, 90 = east); default: the scene's")

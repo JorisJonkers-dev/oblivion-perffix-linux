@@ -8,7 +8,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import fixini, scenario, spin
+from . import diagwin, fixini, scenario, spin
 from .paths import REPO
 from .runner import Options, Runner
 
@@ -101,6 +101,9 @@ class SpinRunner(Runner):
         if bad:
             raise spin.SpinError(f"cvar(s) pinned by profile '{self.profile_name}' (the mod would put them back): "
                                  f"{', '.join(bad)}; use another profile")
+
+    def measured_windows(self):
+        return [(s["t0"], s["t1"]) for s in self.slots]
 
     def estimate_seconds(self, scn, scenes):
         o = self.o
@@ -275,9 +278,10 @@ class SpinRunner(Runner):
         windows = {}
         for s in self.slots:
             windows.setdefault(s["variant"], []).append((s["t0"], s["t1"]))
-        texts, summary = spin.split_ledger(text, windows, offset)
+        texts, summary = spin.split_ledger(text, windows, offset, exclude=diagwin.exclusions(self.sync_markers))
         led["offsetS"] = round(offset, 3)
-        led["note"] = f"ledger clock anchored on the two sync stalls (wall = end_ms/1000 + {offset:.3f})."
+        led["note"] = (f"ledger clock anchored on the two sync stalls (wall = end_ms/1000 + {offset:.3f}); per-variant "
+                       f"files hold only the slots' frames, without +-{diagwin.MARGIN_S:g} s around a sync stall")
         tool = REPO / "tools" / "stutter_ledger.py"
         for name, t in texts.items():
             f = run_dir / "diag" / f"ledger-{name}.csv"

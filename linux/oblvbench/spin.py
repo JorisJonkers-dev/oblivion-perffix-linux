@@ -422,7 +422,7 @@ def anchor_ledger(frames, markers, tol=0.25):
     return best[0][1]
 
 
-def split_ledger(text, windows, offset):
+def split_ledger(text, windows, offset, exclude=()):
     """{variant: filtered ledger text} with the '#' lines and the F/S rows that end inside the variant's windows
     (wall clock; `offset` from anchor_ledger), plus {variant: summary}."""
     texts, summary = {}, {}
@@ -445,7 +445,7 @@ def split_ledger(text, windows, offset):
                 wall = float(row[c.index("end_ms")]) / 1000.0 + offset
             except ValueError:
                 continue
-            if any(a <= wall <= b for a, b in wins):
+            if any(a <= wall <= b for a, b in wins) and not any(a <= wall <= b for a, b in exclude):
                 rows.append(line)
                 if kind == "F,":
                     try:

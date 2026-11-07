@@ -15,7 +15,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import detail, envfile, fixini, game, mangohud, scenario
+from . import detail, diagwin, envfile, fixini, game, mangohud, scenario, warmup
 from .protocol import BenchError, Bridge, Deadline, GameDown, NeedsUser
 from .saves import SaveGuard
 from .ue4ss import Installer
@@ -49,7 +49,9 @@ class Options:
         self.label = kw.get("label") or "run"
         self.fix = kw.get("fix") or "on"
         self.profile = kw.get("profile")
-        self.warmup = float(kw.get("warmup", 60))
+        w = warmup.parse_warmup(kw.get("warmup", "auto"))
+        self.warmup_auto = w == "auto"
+        self.warmup = warmup.CAP_S if self.warmup_auto else w     # the cap bounds the run's time limit
         self.keep_ue4ss = bool(kw.get("keep_ue4ss"))
         self.show_hud = bool(kw.get("show_hud"))
         self.pin = kw.get("pin", True)
@@ -569,6 +571,8 @@ class Runner:
         a = self.send(f"lua {chunk}", timeout=8, nothrow=True)
         if a == "sync":
             self.sync_markers.append((time.time(), SYNC_STALL_MS))
+            self.result.setdefault("syncStalls", []).append({"wall": round(self.sync_markers[-1][0], 3),
+                                                             "ms": SYNC_STALL_MS})
         else:
             self.warn("sync marker not answered: the frame log's start comes from its file name only (+-0.5 s)")
         self.send("ping", nothrow=True)                 # one more mod-clock sample
@@ -580,11 +584,35 @@ class Runner:
             self.move_to_flight_start(first)
             self.place = None
             self.send("prep")
-        if self.o.warmup > 0:
-            # upstream waits for the driver's shader compilation and the game's PSO precompile (Windows-only
-            # probes); here a fixed wait in the world
+        if self.o.warmup_auto:
+            self.say(f"warm-up: auto (until the PSO precompile is done; min {warmup.MIN_S:g} s, cap {warmup.CAP_S:g} s)")
+            res = warmup.wait_auto(self.read_fix_log, self.read_live_frames, self.launch_wall - 1.0, self.wait,
+                                   say=self.say)
+            self.result["warmup"] = res
+            self.say(f"warm-up ended after {res['seconds']:.0f} s: {res['reason']}")
+            if res["reason"].startswith("cap"):
+                self.warn(f"warm-up hit its cap: {res['reason']}")
+        elif self.o.warmup > 0:
+            self.result["warmup"] = {"mode": "fixed", "seconds": self.o.warmup, "reason": "--warmup seconds"}
             self.say(f"warm-up: {self.o.warmup:.0f} s in the world (shader and PSO compilation)")
             self.wait(self.o.warmup)
+
+    def read_fix_log(self):
+        try:
+            return (self.paths.win64 / "OblivionPerfFix.log").read_text(errors="replace")
+        except OSError:
+            return None
+
+    def read_live_frames(self):
+        """(elapsed s, frametime ms) of the MangoHud log written so far, or None."""
+        try:
+            path = mangohud.pick_log(mangohud.find_logs(self.run_dir / "mangohud"))
+            if not path:
+                return None
+            log = mangohud.parse_csv(path)
+            return (log.elapsed, log.frametime) if len(log) else None
+        except (OSError, ValueError):
+            return None
 
     def end_of_pass(self):
         if self.pin_on and self.st["wx_override"]:
@@ -1089,6 +1117,10 @@ class Runner:
                 step("ue4ss", inst.remove)
         step("env file", lambda: envfile.clear_env(self.paths.env_file))
 
+    def measured_windows(self):
+        """Wall-clock (t0, t1) of what the run measures (the diag tools rank only these)."""
+        return [(s["t0"], s["t1"]) for s in self.segments]
+
     def collect_diag(self, run_dir, win64, since):
         """Copies the fix's diagnostic files written during this run and ranks them with upstream's tools."""
         import shutil
@@ -1106,11 +1138,25 @@ class Runner:
         self.result["diagFiles"] = copied
         jobs = [("OblivionPerfFix-ledger.csv", "stutter_ledger.py", ["--ignore-focus"]),
                 ("OblivionPerfFix-ticksplit.csv", "tick_split.py", [])]
+        rng = None
+        if "OblivionPerfFix-ledger.csv" in copied:
+            rng = diagwin.ledger_range((out / "OblivionPerfFix-ledger.csv").read_text(errors="replace"),
+                                       self.sync_markers, self.measured_windows())
+            self.result["diagRange"] = rng
+            for st, ms in zip(self.result.get("syncStalls", []), rng.get("stallsLedgerMs", [])):
+                st["ledgerMs"] = ms
+            if rng["fromMs"] is None:
+                self.warn("diagnostics: " + rng.get("note", "no range"))
         for csv_name, tool, extra in jobs:
             if csv_name in copied and (tools / tool).exists():
-                r = subprocess.run([sys.executable, "-I", str(tools / tool), str(out / csv_name), *extra],
-                                   capture_output=True, text=True, timeout=300)
-                (out / (Path(tool).stem + ".txt")).write_text(r.stdout + (("\n" + r.stderr) if r.returncode else ""))
+                path = str(out / csv_name)
+                runs = [(Path(tool).stem + "-unfiltered.txt", [])] if rng and rng["fromMs"] is not None else []
+                runs.append((Path(tool).stem + ".txt", ["--from-ms", str(rng["fromMs"]), "--to-ms", str(rng["toMs"])]
+                             if rng and rng["fromMs"] is not None else []))
+                for fname, rargs in runs:
+                    r = subprocess.run([sys.executable, "-I", str(tools / tool), path, *extra, *rargs],
+                                       capture_output=True, text=True, timeout=300)
+                    (out / fname).write_text(r.stdout + (("\n" + r.stderr) if r.returncode else ""))
         self.say(f"diagnostics: {', '.join(copied) or 'none written'} -> {out}")
 
     def analyse(self, mh_dir, watcher):
