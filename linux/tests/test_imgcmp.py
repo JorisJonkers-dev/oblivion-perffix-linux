@@ -232,7 +232,9 @@ class GalleryTest(unittest.TestCase):
         self.assertIn("![lod 000](shots/sbs/lod/000.png)", md)
         self.assertIn("Noise floor", md)
         w, h, ch, _ = imgcmp.decode_png((d / "shots/sbs/lod/000.png").read_bytes())
-        self.assertEqual((w, ch), (W * 3 + 8, 3))
+        self.assertEqual(ch, 3)                      # registered pairs are cropped to their overlap
+        self.assertLessEqual(w, W * 3 + 8)
+        self.assertEqual((w - 8) % 3, 0)
 
     def test_registered_floor_and_reshots(self):
         """Shots of 'the same' view a few pixels apart: the as-captured floor is poor, the registered one ~1; reshots
