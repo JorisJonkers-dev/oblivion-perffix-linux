@@ -196,6 +196,7 @@ DWORD WINAPI MonitorThread(LPVOID)
         SetDoorDiagEarlyStream(cfg.doorDiagEarlyStream);     // diagnostic DoorDiag's experiment (no-op unless installed)
         SetFadeVtFlushSkip(cfg.fadeVtFlushSkip);             // FadeVtFlushSkip (no-op unless installed)
         SetStreamBehindLoading(cfg.streamBehindLoading);     // StreamBehindLoadingScreen: no-op unless installed at start-up
+        SetStreamPrewarm(cfg.streamPrewarm, cfg.streamPrewarmMaxHoldMs, cfg.vtStreamingUploads > 0);  // StreamPrewarmBehindLoading (no-op unless StreamBehindLoadingScreen is installed)
         SetUnfreezeBehindLoading(cfg.unfreezeBehindLoading); // prototype UnfreezeBehindLoadingScreen (trade-off; 0 = off)
         SetUnfreezeBehindLoadingFastTravel(cfg.unfreezeBehindLoadingFastTravel);  // ... its own hold after a fast travel (0 = the same)
         SetOtProfile(cfg.otProfile, cfg.otProfileMs, cfg.otProfileSampleHz, cfg.otCrashContext);  // no-op unless installed at start-up
@@ -315,6 +316,7 @@ DWORD WINAPI MonitorThread(LPVOID)
             LogDoorDiagStats();
             LogFadeVtFlushStats();
             LogStreamBehindLoadingStats();
+            LogStreamPrewarmStats();
         }
     }
 }
@@ -643,7 +645,7 @@ void Init(const char* loadedVia, bool proxyOk, bool beforeGameCode)
     // NpcCreationPacing's frame hook); afterwards the ini switches it live.
     if (cfg.streamBehindLoading) {
         if (!g_pacingHooked) Log("[streamload] NpcCreationPacing's frame hook is not installed: not installed");
-        else if (InstallStreamBehindLoading(beforeGameCode, cfg.unfreezeBehindLoading != 0)) SetStreamBehindLoading(true);
+        else if (InstallStreamBehindLoading(beforeGameCode, cfg.unfreezeBehindLoading != 0 || cfg.streamPrewarmMaxHoldMs > 0)) SetStreamBehindLoading(true);
     } else Log("[streamload] StreamBehindLoadingScreen off in OblivionPerfFix.ini (takes a restart to switch on)");
     // AnimTeardownParallel: three calls redirected, only if not 0 at startup; afterwards the ini switches it live.
     if (cfg.animTeardownParallel && ParallelHelpersAllowed(cfg)) {

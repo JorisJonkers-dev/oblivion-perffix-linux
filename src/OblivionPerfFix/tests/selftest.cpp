@@ -4546,6 +4546,74 @@ int wmain(int argc, wchar_t** argv)
         VtStreamingUploadsTestSetup(nullptr);
     }
 
+    // StreamPrewarmBehindLoading: the cvar lookup, raise and restore on fake console variables (int kind, priority bits).
+    {
+        struct FakeCvar { void** vt; int32_t value; int32_t flags; };
+        struct FakeMgr { void** vt; };
+        static FakeCvar cv[5];
+        static void* cvVt[24] = {};
+        static void* otherVt[24] = {};
+        static void* mgrVt[32] = {};
+        static FakeMgr mgr;
+        static FakeMgr* mgrPtr;
+        static const wchar_t* const names[5] = {L"r.VT.MaxUploadsPerFrame.Streaming", L"r.VT.MaxUploadsPerFrame",
+            L"r.VT.MaxTilesProducedPerFrame", L"r.Streaming.FramesForFullUpdate", L"r.Streaming.MaxNumTexturesToStreamPerFrame"};
+        cvVt[0x18 / 8] = reinterpret_cast<void*>(+[](void* c) -> int32_t { return static_cast<FakeCvar*>(c)->flags; });
+        cvVt[0x80 / 8] = reinterpret_cast<void*>(+[](void* c, const wchar_t* v, int32_t f) {
+            FakeCvar* x = static_cast<FakeCvar*>(c);
+            if ((f & 0xFF000000) < (x->flags & 0xFF000000)) return;  // lower priority is refused, as the engine does
+            x->value = _wtoi(v);
+            x->flags = (x->flags & 0x00FFFFFF) | (f & 0xFF000000);
+        });
+        cvVt[0x90 / 8] = reinterpret_cast<void*>(+[](void* c) -> int32_t { return static_cast<FakeCvar*>(c)->value; });
+        mgrVt[0xC0 / 8] = reinterpret_cast<void*>(+[](void*, const wchar_t* n, bool) -> void* {
+            for (int i = 0; i < 5; ++i) if (!wcscmp(n, names[i]) && cv[i].vt) return &cv[i];
+            return nullptr;
+        });
+        mgr.vt = mgrVt;
+        mgrPtr = &mgr;
+        const int32_t scal = 0x04000000;  // SetByScalability-like priority
+        cv[0] = {cvVt, 4, scal};
+        cv[1] = {cvVt, 8, scal};
+        cv[2] = {otherVt, 8, scal};      // another kind: left alone
+        cv[3] = {cvVt, 5, scal};
+        cv[4] = {cvVt, 0, scal};         // 0 = unlimited: left alone
+        FakeCvar pool = {cvVt, 4096, scal};
+        StreamPrewarmTestSetup(reinterpret_cast<void**>(&mgrPtr));
+        StreamPrewarmBegin(&pool);
+        Check(!StreamPrewarmActive() && cv[0].value == 4, "stream prewarm: off by default, nothing raised");
+        SetStreamPrewarm(true, 5000, false);
+        Check(StreamPrewarmHoldMs() == 3000, "stream prewarm: extra hold capped at 3000 ms");
+        SetStreamPrewarm(true, 0, false);
+        StreamPrewarmBegin(&pool);
+        Check(StreamPrewarmActive(), "stream prewarm: raised");
+        Check(cv[0].value == 64 && cv[1].value == 64, "stream prewarm: upload budgets raised");
+        Check(cv[2].value == 8, "stream prewarm: a variable of another kind is not touched");
+        Check(cv[3].value == 1, "stream prewarm: the update interval lowered");
+        Check(cv[4].value == 0, "stream prewarm: an unlimited (0) budget is left");
+        Check(cv[0].flags == scal, "stream prewarm: the variable's priority kept");
+        cv[1].value = 100;  // the game changed one meanwhile
+        StreamPrewarmEnd(3);
+        Check(!StreamPrewarmActive() && cv[0].value == 4 && cv[3].value == 5, "stream prewarm: values put back exactly");
+        Check(cv[1].value == 100, "stream prewarm: a value the game changed meanwhile is kept");
+        cv[0].value = 100; cv[1].value = 8;  // already above the target: never lowered
+        StreamPrewarmBegin(&pool);
+        Check(cv[0].value == 100, "stream prewarm: a value already faster is not slowed");
+        StreamPrewarmEnd(0);
+        Check(cv[0].value == 100 && cv[3].value == 5, "stream prewarm: second transition restores too");
+        SetStreamPrewarm(true, 0, true);
+        StreamPrewarmBegin(&pool);
+        Check(cv[0].value == 100 && cv[1].value == 64, "stream prewarm: VtStreamingUploads' variable left to that key");
+        StreamPrewarmEnd(0);
+        Check(cv[1].value == 8, "stream prewarm: restored with the key on");
+        cv[3].value = 5;
+        mgrPtr = nullptr;  // no console manager yet: nothing happens
+        StreamPrewarmBegin(&pool);
+        Check(!StreamPrewarmActive() || cv[3].value == 5, "stream prewarm: no manager, no change");
+        StreamPrewarmEnd(0);
+        StreamPrewarmTestSetup(nullptr);
+    }
+
     // FrameGenCrashGuard: AMD FidelityFX's command list pool, the game's own amd_fidelityfx_dx12.dll loaded here, on a WARP device. The
     // guard installs from the DLL load notification; with the queue held by a fence wait and all 8 lists of a type taken,
     // the library's function would read through a null slot (the 10-08 / 10-13 crashes); the guard waits for the queue.

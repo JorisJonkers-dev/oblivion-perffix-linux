@@ -19,6 +19,11 @@ driver library); **our bug** = caused by an earlier version of OblivionPerfFix.
   `OblivionPerfFix.log` when that thread faults, and leaves the exception alone. Keys `OtProfileMs` and `OtProfileSampleHz`.
   Start-up, then live; nothing is installed when both are 0.
 
+- **`StreamPrewarmBehindLoading`** (new, 0 until measured) and **`StreamPrewarmMaxHoldMs`** (new, 0): while a door, gate or
+  fast-travel loading screen idles the texture streaming limits (virtual texture pages uploaded and tiles produced per
+  frame, the mip streamer's update interval) are raised and put back exactly before the fade-in, so exteriors are
+  sharper when the picture appears. Same finished image; the optional hold keeps the loading screen up longer.
+  Needs `StreamBehindLoadingScreen`. Log tag `[prewarm]`.
 Proton / Wine awareness (the game always runs under Proton on Linux; `IsWine()` is the one place that tells).
 
 - **`PsoColdGuardWine`** (new, 1): under Wine the cold-cache guard of `PsoPrecompileFast` never worked, because the
