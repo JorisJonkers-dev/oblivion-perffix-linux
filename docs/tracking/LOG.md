@@ -5,6 +5,26 @@ Investigations: [investigations.md](investigations.md).
 
 ## 2026-11-07
 
+### Turn-settle, first live result (`spin-turn-canal`, canal, replay on, 16 turns per variant)
+| Variant | Settle | Lighting | Pop-in | Missing regions at t=0 | Luma settle |
+|---|---|---|---|---|---|
+| base | **2.56 s** | 2.25 s | 2.56 s | 18.5 | 1.36 s |
+| proxy0 (`r.PSOPrecache.ProxyCreationWhenPSOReady=0`) | 2.51 s (~) | 2.20 s | 2.41 s | 18.0 | 1.20 s |
+
+- The owner's observation is confirmed: the picture needs about 2.5 s after a turn, for both lighting and objects.
+- The PSO proxy delay is **not** the cause, at least with replay on.
+- Luminance curves are mostly exponential with τ ≈ 1.1 s, so eye adaptation adds to the lighting settle.
+- Shots now land within 0.9° of the requested heading (camera read-back +0.9°, systematic). The base-vs-base SSIM floor
+  rose from 0.30 to 0.63.
+- Turn capture ran every 0.20 s (109 ms per grab), so settle times are good to ±0.2 s.
+- Next: Lumen response (`FastCameraMode`, fewer accumulated frames) and VT/streaming upload budgets (`spin-turn-canal2`).
+
+### Display layout reset again
+- Cause: the owner switched the TV on.
+- Restored: HDMI-2 portrait-left 1920x1080@144, HDMI-1 2560x1440@144 primary.
+- Consider persisting a 3-monitor configuration in `monitors.xml` so GNOME stops falling back to 60 Hz landscape.
+
+
 ### PSO record-and-replay works: runtime PSO creation time −70%, no ≥20 ms creations (`pso-record4` → `pso-replay4`)
 8 random spots, seed 1, DLL `623f0cc0`, `PsoRecordReplay=1`.
 
