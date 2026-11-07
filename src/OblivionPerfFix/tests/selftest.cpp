@@ -3022,6 +3022,11 @@ int wmain(int argc, wchar_t** argv)
         Check(at(pi.genericExec, 0x4919D40) && pi.numGenericSlots == 3, "pacing: generic command exe+0x4919D40, 3 slots");
         Check(at(pi.preTickReturn, 0x4899E17) && at(pi.postTickReturn, 0x4899B2D), "pacing: pre-tick call returns to exe+0x4899E17, post-tick to exe+0x4899B2D");
         Check(at(pi.tes, 0x941F748), "pacing: TES global exe+0x941F748");
+        {   // the RunSession(-1) site has one owner: NpcCreationPacing (OtProfile skips it when pacing is hooked)
+            const uint8_t otpRewrite[4] = {0x48, 0x8B, 0xCE, 0xE8};
+            Check(memcmp(game.base + 0x4899E0C, otpRewrite, 4) != 0,
+                  "pacing: the game thread's RunSession(-1) site is the game's own call, not OtProfile's rewrite (one owner)");
+        }
         Check(at(pi.delegateVtable[0], 0x7D76998) && at(pi.delegateExecIfSafe[0], 0x4852870) && pi.delegateSize[0] == 0x28 &&
                   !pi.delegateCopyCtor[0], "pacing: appearance delegate vtable exe+0x7D76998, size 0x28, plain copy");
         Check(at(pi.delegateVtable[1], 0x7D7F190) && at(pi.delegateExecIfSafe[1], 0x48B7A30) && pi.delegateSize[1] == 0x30 &&
@@ -5104,19 +5109,35 @@ int wmain(int argc, wchar_t** argv)
                     CloseHandle(h);
                 }
             };
+            // Deterministic: the file's last-write time is set explicitly and the clock is injected (Wine's file times and
+            // the system clock need not agree to 2 s).
+            const ULONGLONG T0 = 133000000000000000ull, SEC = 10000000ull;   // 100 ns units
+            const auto stamp = [&](ULONGLONG t) {
+                HANDLE h = CreateFileW(tmp, FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+                FILETIME ft{static_cast<DWORD>(t), static_cast<DWORD>(t >> 32)};
+                if (h != INVALID_HANDLE_VALUE) {
+                    SetFileTime(h, nullptr, nullptr, &ft);
+                    CloseHandle(h);
+                }
+            };
+            ULONGLONG now = T0 + 100 * SEC;
             writeIni("[Fixes]\r\nOsPageCacheMB=77\r\n");
+            stamp(T0);
             Config c;
-            Check(LoadConfigIfChanged(tmp, &c) && c.osPageCacheMB == 77, "config: the first read parses the ini");
-            Check(LoadConfigIfChanged(tmp, &c), "config: a file written under 2 s ago is parsed again (still being written?)");
-            Sleep(2300);
-            Check(!LoadConfigIfChanged(tmp, &c), "config: unchanged and older than 2 s -> not parsed (the cached values stay)");
-            writeIni("[Fixes]\r\nOsPageCacheMB=99\r\n");
-            Check(LoadConfigIfChanged(tmp, &c) && c.osPageCacheMB == 99, "config: a changed file is parsed within one tick");
+            Check(LoadConfigIfChanged(tmp, &c, &now) && c.osPageCacheMB == 77, "config: the first read parses the ini");
+            now = T0 + 1 * SEC;
+            Check(LoadConfigIfChanged(tmp, &c, &now), "config: a file written under 2 s ago is parsed again (still being written?)");
+            now = T0 + 3 * SEC;
+            Check(!LoadConfigIfChanged(tmp, &c, &now), "config: unchanged and older than 2 s -> not parsed (the cached values stay)");
+            writeIni("[Fixes]\r\nOsPageCacheMB=99\r\n");   // same size, new last-write time
+            stamp(T0 + 10 * SEC);
+            Check(LoadConfigIfChanged(tmp, &c, &now) && c.osPageCacheMB == 99, "config: a changed file is parsed within one tick");
             writeIni("[Fixes]\r\nOsPageCacheMB=1234\r\n");   // longer: the size changed
-            Check(LoadConfigIfChanged(tmp, &c) && c.osPageCacheMB == 1234, "config: a size change is parsed");
+            stamp(T0 + 10 * SEC);
+            Check(LoadConfigIfChanged(tmp, &c, &now) && c.osPageCacheMB == 1234, "config: a size change is parsed");
             DeleteFileW(tmp);
-            Check(LoadConfigIfChanged(tmp, &c) && c.osPageCacheMB == Config().osPageCacheMB, "config: a missing ini reads as the defaults");
-            Check(!LoadConfigIfChanged(tmp, &c), "config: ... and a still-missing ini is not re-read every second");
+            Check(LoadConfigIfChanged(tmp, &c, &now) && c.osPageCacheMB == Config().osPageCacheMB, "config: a missing ini reads as the defaults");
+            Check(!LoadConfigIfChanged(tmp, &c, &now), "config: ... and a still-missing ini is not re-read every second");
         }
 
         // CommandAllocatorTrim's tight level: the old rule unchanged without a shared GPU, always tight with one.

@@ -330,7 +330,7 @@ struct Config {
 Config LoadConfig(const wchar_t* iniPath);
 // The monitor thread's per-second read: parses the ini into *cfg only when its size or last-write time changed (or the
 // file changed within the last 2 s, or *cfg was never read); returns true when it parsed.
-bool LoadConfigIfChanged(const wchar_t* iniPath, Config* cfg);
+bool LoadConfigIfChanged(const wchar_t* iniPath, Config* cfg, const unsigned long long* nowFileTime = nullptr);  // nowFileTime: tests inject the clock
 // Running under Wine (Proton, CrossOver): ntdll exports wine_get_version. Asked once, cached.
 bool IsWine();
 

@@ -93,8 +93,26 @@ __declspec(noinline) static void RaiseProbe(bool* caught, bool* caughtOther)
     }
 }
 
+// OtProfile rewrites call sites in the mapped exe that other fixes' tests look for in the game's own bytes (NpcCreationPacing
+// keys on the RunSession(-1) call at exe+0x4899E0C). So its checks run on the code as it was, and the code is put back after.
+struct TextGuard {
+    uint8_t* at;
+    size_t size;
+    std::vector<uint8_t> saved;
+    explicit TextGuard(const GameModule& g) : at(g.text.begin), size(static_cast<size_t>(g.text.end - g.text.begin)), saved(at, at + size) {}
+    ~TextGuard()
+    {
+        DWORD old = 0;
+        VirtualProtect(at, size, PAGE_EXECUTE_READWRITE, &old);
+        memcpy(at, saved.data(), size);
+        VirtualProtect(at, size, old, &old);
+        FlushInstructionCache(GetCurrentProcess(), at, size);
+    }
+};
+
 void Run(const GameModule& game)
 {
+    TextGuard restoreCode(game);
     Check(InstallOtProfile(true, L".", true, true, false, true), "OtProfile: installed on the mapped exe (profile and crash context)");
     OtProfileInfoOut i{};
     if (!Installed(OtProfileInfo(&i) && i.installed, "OtProfile")) return;

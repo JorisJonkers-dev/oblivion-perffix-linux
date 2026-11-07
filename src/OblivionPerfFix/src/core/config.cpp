@@ -190,7 +190,7 @@ bool IsWine()
 // trip each under Wine, ~114 per second). One GetFileAttributesExW per second says whether size or last-write time moved.
 // A file written within the last 2 s is re-read anyway (an editor may still be writing; coarse timestamps), so a live switch
 // still lands within about a second and a half-written file never sticks.
-bool LoadConfigIfChanged(const wchar_t* iniPath, Config* cfg)
+bool LoadConfigIfChanged(const wchar_t* iniPath, Config* cfg, const unsigned long long* nowFileTime)
 {
     static bool have = false, haveStat = false;
     static ULONGLONG lastWrite = 0, size = 0;
@@ -200,9 +200,13 @@ bool LoadConfigIfChanged(const wchar_t* iniPath, Config* cfg)
     if (ok) {
         w = (static_cast<ULONGLONG>(a.ftLastWriteTime.dwHighDateTime) << 32) | a.ftLastWriteTime.dwLowDateTime;
         sz = (static_cast<ULONGLONG>(a.nFileSizeHigh) << 32) | a.nFileSizeLow;
-        FILETIME now;
-        GetSystemTimeAsFileTime(&now);
-        nowFt = (static_cast<ULONGLONG>(now.dwHighDateTime) << 32) | now.dwLowDateTime;
+        if (nowFileTime) {
+            nowFt = *nowFileTime;
+        } else {
+            FILETIME now;
+            GetSystemTimeAsFileTime(&now);
+            nowFt = (static_cast<ULONGLONG>(now.dwHighDateTime) << 32) | now.dwLowDateTime;
+        }
     }
     const bool same = have && ok == haveStat && (!ok || (w == lastWrite && sz == size));
     const bool fresh = ok && nowFt >= w && nowFt - w < 20000000ull;  // written within 2 s (100 ns units)
