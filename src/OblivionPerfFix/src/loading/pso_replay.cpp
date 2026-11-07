@@ -60,7 +60,7 @@ constexpr uint8_t kTagBlob = 'B', kTagPso = 'P';
 constexpr uint8_t kBlobShader = 1, kBlobRootSig = 2, kBlobLayout = 3;
 constexpr uint8_t kKindGfx = 1, kKindCompute = 2, kKindStream = 3;
 constexpr size_t kMaxBlob = 32u << 20;
-constexpr char kMagic[8] = {'O', 'P', 'F', 'P', 'S', 'O', '0', '1'};
+constexpr char kMagic[8] = {'O', 'P', 'F', 'P', 'S', 'O', '0', '2'};
 
 using GfxFn = HRESULT(STDMETHODCALLTYPE*)(void*, const D3D12_GRAPHICS_PIPELINE_STATE_DESC*, REFIID, void**);
 using ComputeFn = HRESULT(STDMETHODCALLTYPE*)(void*, const D3D12_COMPUTE_PIPELINE_STATE_DESC*, REFIID, void**);
@@ -111,6 +111,8 @@ thread_local bool t_inReplay = false;
 std::mutex g_mu;
 struct Blob {
     uint8_t kind = 0;
+    uint8_t comp = 0;        // 1: data is LZ4-compressed
+    uint32_t raw = 0;        // the size before compression
     std::vector<uint8_t> data;
 };
 std::unordered_map<void*, uint64_t> g_rsOf;                 // root signature object -> blob hash
@@ -142,7 +144,7 @@ std::atomic<int> g_replayWorkers{0};
 uint64_t g_replayT0 = 0;
 size_t g_replayTotal = 0;
 std::mutex g_rsMu;
-std::unordered_map<uint64_t, ID3D12RootSignature*> g_rsMade;   // replay's root signatures
+std::unordered_map<uint64_t, std::pair<ID3D12RootSignature*, int>> g_rsMade;   // replay's root signatures
 void* g_replayDevice = nullptr;
 bool g_replayOwnDevice = false;
 
@@ -264,6 +266,117 @@ bool WalkStream(const uint8_t* s, size_t n, F f)
     return true;
 }
 
+// ---- a small LZ4-block-format codec (no library): shader bytecode compresses about 2-3x ----
+
+namespace lz {
+inline uint32_t R32(const uint8_t* p)
+{
+    uint32_t v;
+    memcpy(&v, p, 4);
+    return v;
+}
+void Put(std::vector<uint8_t>& o, const uint8_t* lit, size_t litLen, size_t off, size_t mlen, bool last)
+{
+    const size_t m = last ? 0 : mlen - 4;
+    o.push_back(static_cast<uint8_t>((litLen >= 15 ? 15 : litLen) << 4 | (last ? 0 : (m >= 15 ? 15 : m))));
+    if (litLen >= 15)
+        for (size_t r = litLen - 15;; r -= 255) {
+            o.push_back(static_cast<uint8_t>(r >= 255 ? 255 : r));
+            if (r < 255) break;
+        }
+    o.insert(o.end(), lit, lit + litLen);
+    if (last) return;
+    o.push_back(static_cast<uint8_t>(off));
+    o.push_back(static_cast<uint8_t>(off >> 8));
+    if (m >= 15)
+        for (size_t r = m - 15;; r -= 255) {
+            o.push_back(static_cast<uint8_t>(r >= 255 ? 255 : r));
+            if (r < 255) break;
+        }
+}
+void Compress(const uint8_t* s, size_t n, std::vector<uint8_t>& o)
+{
+    o.clear();
+    std::vector<uint32_t> table(1 << 14, 0xFFFFFFFFu);
+    size_t ip = 0, anchor = 0;
+    if (n >= 13) {
+        const size_t limit = n - 12;   // a match starts before this; the last 5 bytes stay literals
+        while (ip < limit) {
+            const uint32_t h = (R32(s + ip) * 2654435761u) >> 18;
+            const uint32_t ref = table[h];
+            table[h] = static_cast<uint32_t>(ip);
+            if (ref != 0xFFFFFFFFu && ip - ref < 65536 && R32(s + ref) == R32(s + ip)) {
+                size_t len = 4;
+                while (ip + len < n - 5 && s[ref + len] == s[ip + len]) ++len;
+                Put(o, s + anchor, ip - anchor, ip - ref, len, false);
+                ip += len;
+                anchor = ip;
+            } else {
+                ++ip;
+            }
+        }
+    }
+    Put(o, s + anchor, n - anchor, 0, 0, true);
+}
+bool Decompress(const uint8_t* s, size_t n, uint8_t* d, size_t dn)
+{
+    size_t ip = 0, op = 0;
+    while (ip < n) {
+        const uint8_t tok = s[ip++];
+        size_t lit = tok >> 4;
+        if (lit == 15) {
+            uint8_t b;
+            do {
+                if (ip >= n) return false;
+                b = s[ip++];
+                lit += b;
+            } while (b == 255);
+        }
+        if (ip + lit > n || op + lit > dn) return false;
+        memcpy(d + op, s + ip, lit);
+        ip += lit;
+        op += lit;
+        if (ip >= n) break;   // the last sequence has literals only
+        if (ip + 2 > n) return false;
+        const size_t off = s[ip] | (size_t(s[ip + 1]) << 8);
+        ip += 2;
+        size_t m = tok & 15;
+        if (m == 15) {
+            uint8_t b;
+            do {
+                if (ip >= n) return false;
+                b = s[ip++];
+                m += b;
+            } while (b == 255);
+        }
+        m += 4;
+        if (!off || off > op || op + m > dn) return false;
+        for (size_t i = 0; i < m; ++i, ++op) d[op] = d[op - off];   // may overlap
+    }
+    return op == dn;
+}
+}  // namespace lz
+
+// a blob as stored: compressed when that is smaller
+Blob MakeBlob(uint8_t kind, const void* p, size_t n)
+{
+    Blob b;
+    b.kind = kind;
+    b.raw = static_cast<uint32_t>(n);
+    if (n >= 64) {
+        std::vector<uint8_t> c;
+        lz::Compress(static_cast<const uint8_t*>(p), n, c);
+        if (c.size() + c.size() / 10 < n) {
+            b.comp = 1;
+            b.data = std::move(c);
+            return b;
+        }
+    }
+    b.data.assign(static_cast<const uint8_t*>(p), static_cast<const uint8_t*>(p) + n);
+    return b;
+}
+std::vector<uint64_t> g_added;   // blobs added to g_pendBlobs by the record being made (callers hold g_mu): rolled back if it is refused
+
 // callers hold g_mu. Returns the blob's hash (0: none).
 uint64_t AddBlob(uint8_t kind, const void* p, size_t n, std::vector<uint64_t>* refs, uint64_t* newBytes)
 {
@@ -271,10 +384,9 @@ uint64_t AddBlob(uint8_t kind, const void* p, size_t n, std::vector<uint64_t>* r
     const uint64_t h = H64(p, n, kind);
     refs->push_back(h);
     if (!g_savedBlobs.count(h) && !g_pendBlobs.count(h)) {
-        Blob& b = g_pendBlobs[h];
-        b.kind = kind;
-        b.data.assign(static_cast<const uint8_t*>(p), static_cast<const uint8_t*>(p) + n);
-        *newBytes += n + 24;
+        Blob& b = g_pendBlobs[h] = MakeBlob(kind, p, n);
+        g_added.push_back(h);
+        *newBytes += b.data.size() + 24;
     }
     return h;
 }
@@ -323,6 +435,7 @@ uint64_t RsHash(ID3D12RootSignature* rs, std::vector<uint64_t>* refs, uint64_t* 
     const auto it = g_rsOf.find(rs);
     if (it == g_rsOf.end()) {
         *ok = false;
+        g_rsUnknown++;
         return 0;
     }
     const uint64_t h = it->second;
@@ -333,9 +446,8 @@ uint64_t RsHash(ID3D12RootSignature* rs, std::vector<uint64_t>* refs, uint64_t* 
             *ok = false;
             return 0;
         }
-        Blob& pb = g_pendBlobs[h];
-        pb.kind = kBlobRootSig;
-        pb.data = b->second;
+        Blob& pb = g_pendBlobs[h] = MakeBlob(kBlobRootSig, b->second.data(), b->second.size());
+        g_added.push_back(h);
         *nb += pb.data.size() + 24;
     }
     return h;
@@ -518,14 +630,16 @@ size_t ParseFile(const std::vector<uint8_t>& f, ReplaySet* set)
         uint64_t h;
         memcpy(&h, p + len, 8);
         if (h != H64(p, len, tag)) break;
-        if (tag == kTagBlob && len > 9) {
+        if (tag == kTagBlob && len > 14) {
             uint64_t bh;
             memcpy(&bh, p + 1, 8);
             g_savedBlobs.insert(bh);
             if (set) {
                 Blob& b = set->blobs[bh];
                 b.kind = p[0];
-                b.data.assign(p + 9, p + len);
+                memcpy(&b.raw, p + 9, 4);
+                b.comp = p[13];
+                b.data.assign(p + 14, p + len);
             }
         } else if (tag == kTagPso && len > 9) {
             Rec r;
@@ -611,6 +725,8 @@ void Flush()
         std::vector<uint8_t> p;
         p.push_back(b.second.kind);
         PutBytes(p, &b.first, 8);
+        PutBytes(p, &b.second.raw, 4);
+        p.push_back(b.second.comp);
         PutBytes(p, b.second.data.data(), b.second.data.size());
         PutEntry(out, kTagBlob, p);
     }
@@ -671,6 +787,7 @@ void AfterCall(Ctx* c)
     {
         std::lock_guard<std::mutex> lk(g_mu);
         if (mode == 1 && g_fileReady) {
+            g_added.clear();
             try {
                 ok = c->what == 0   ? SerGraphics(*static_cast<const D3D12_GRAPHICS_PIPELINE_STATE_DESC*>(c->desc), &r, &nb)
                      : c->what == 1 ? SerCompute(*static_cast<const D3D12_COMPUTE_PIPELINE_STATE_DESC*>(c->desc), &r, &nb)
@@ -689,7 +806,7 @@ void AfterCall(Ctx* c)
                             Log("[psorec] the record is full (%.1f MB, PsoRecordMaxMB): no more pipelines recorded",
                                 (g_fileBytes + g_pendBytes) / 1048576.0);
                         }
-                        g_pendBlobs.clear();   // blobs added for this record only
+                        for (uint64_t h : g_added) g_pendBlobs.erase(h);   // this record's own new blobs only
                         g_skipped++;
                     } else {
                         g_knownPso.insert(r.hash);
@@ -698,10 +815,10 @@ void AfterCall(Ctx* c)
                         g_recorded++;
                     }
                 } else if (!g_knownPso.count(r.hash)) {
-                    g_pendBlobs.clear();
+                    for (uint64_t h : g_added) g_pendBlobs.erase(h);
                 }
             } else {
-                // blobs added by a record that could not be finished stay pending: harmless, written with the next one
+                for (uint64_t h : g_added) g_pendBlobs.erase(h);
                 g_skipped++;
             }
         }
@@ -789,20 +906,55 @@ HRESULT STDMETHODCALLTYPE HookRootSig(void* self, UINT mask, const void* blob, S
 struct Made {
     std::deque<std::vector<D3D12_INPUT_ELEMENT_DESC>> layouts;
     std::deque<std::string> names;
+    std::deque<std::vector<uint8_t>> bufs;   // decompressed blobs, alive until the creation call returned
 };
 
-const Blob* FindBlob(uint64_t h, uint8_t kind)
+// why a replay did not create a pipeline
+enum Why { kOk = 0, kWhyBadPod, kWhyRsMissing, kWhyRsCreate, kWhyShaderMissing, kWhyShaderSize, kWhyShaderBytes, kWhyLayout, kWhyStream,
+           kWhyCreate, kWhyFault, kWhyCount };
+const char* const kWhyName[kWhyCount] = {"ok", "bad record", "root signature blob missing", "CreateRootSignature failed", "shader blob missing",
+                                         "shader size differs", "shader blob unreadable", "input layout blob bad", "stream not understood or unsupported",
+                                         "pipeline creation failed", "fault"};
+std::atomic<uint64_t> g_why[kWhyCount];
+std::atomic<uint32_t> g_firstHr{0};
+thread_local Why t_why = kOk;
+int Fail(Why w)
+{
+    t_why = w;
+    return 0;
+}
+
+// the blob's bytes (decompressed into m when stored compressed)
+bool GetBlob(uint64_t h, uint8_t kind, Made* m, const uint8_t** p, size_t* n, Why* why)
 {
     const auto it = g_set->blobs.find(h);
-    return it != g_set->blobs.end() && it->second.kind == kind ? &it->second : nullptr;
+    if (it == g_set->blobs.end() || it->second.kind != kind) {
+        *why = kind == kBlobRootSig ? kWhyRsMissing : kind == kBlobLayout ? kWhyLayout : kWhyShaderMissing;
+        return false;
+    }
+    const Blob& b = it->second;
+    if (!b.comp) {
+        *p = b.data.data();
+        *n = b.data.size();
+        return true;
+    }
+    m->bufs.emplace_back(b.raw);
+    if (!lz::Decompress(b.data.data(), b.data.size(), m->bufs.back().data(), b.raw)) {
+        *why = kWhyShaderBytes;
+        return false;
+    }
+    *p = m->bufs.back().data();
+    *n = b.raw;
+    return true;
 }
 
 bool MakeLayout(uint64_t h, UINT count, Made* m, const D3D12_INPUT_ELEMENT_DESC** out)
 {
-    const Blob* b = FindBlob(h, kBlobLayout);
-    if (!b || b->data.size() < 4) return false;
-    const uint8_t* p = b->data.data();
-    const uint8_t* e = p + b->data.size();
+    const uint8_t* p;
+    size_t sz;
+    Why w;
+    if (!GetBlob(h, kBlobLayout, m, &p, &sz, &w) || sz < 4) return false;
+    const uint8_t* e = p + sz;
     uint32_t n;
     memcpy(&n, p, 4);
     p += 4;
@@ -838,24 +990,32 @@ bool MakeRs(uint64_t h, ID3D12RootSignature** out)
     std::lock_guard<std::mutex> lk(g_rsMu);
     const auto it = g_rsMade.find(h);
     if (it != g_rsMade.end()) {
-        *out = it->second;
-        return it->second != nullptr;
+        *out = it->second.first;
+        if (!it->second.first) t_why = static_cast<Why>(it->second.second);
+        return it->second.first != nullptr;
     }
-    const Blob* b = FindBlob(h, kBlobRootSig);
+    Made m;
+    const uint8_t* p = nullptr;
+    size_t n = 0;
+    Why why = kWhyRsMissing;
     ID3D12RootSignature* rs = nullptr;
-    if (b) {
+    if (GetBlob(h, kBlobRootSig, &m, &p, &n, &why)) {
         auto* dev = static_cast<ID3D12Device*>(g_replayDevice);
         const auto fn = reinterpret_cast<RootSigFn>(g_rvt->orig[kSlotRootSig]);
         void* obj = nullptr;
-        if (FAILED(fn(dev, 0, b->data.data(), b->data.size(), __uuidof(ID3D12RootSignature), &obj))) obj = nullptr;
+        if (FAILED(fn(dev, 0, p, n, __uuidof(ID3D12RootSignature), &obj))) {
+            obj = nullptr;
+            why = kWhyRsCreate;
+        }
         rs = static_cast<ID3D12RootSignature*>(obj);
     }
-    g_rsMade[h] = rs;
+    g_rsMade[h] = {rs, why};
     *out = rs;
+    if (!rs) t_why = why;
     return rs != nullptr;
 }
 
-bool Shader(D3D12_SHADER_BYTECODE* s)
+bool Shader(D3D12_SHADER_BYTECODE* s, Made* m)
 {
     const uint64_t h = GetPtr(&s->pShaderBytecode);
     if (!h) {
@@ -863,29 +1023,39 @@ bool Shader(D3D12_SHADER_BYTECODE* s)
         s->BytecodeLength = 0;
         return true;
     }
-    const Blob* b = FindBlob(h, kBlobShader);
-    if (!b || b->data.size() != s->BytecodeLength) return false;
-    s->pShaderBytecode = b->data.data();
+    const uint8_t* p;
+    size_t n;
+    Why w = kWhyShaderMissing;
+    if (!GetBlob(h, kBlobShader, m, &p, &n, &w)) {
+        t_why = w;
+        return false;
+    }
+    if (n != s->BytecodeLength) {
+        t_why = kWhyShaderSize;
+        return false;
+    }
+    s->pShaderBytecode = p;
     return true;
 }
 
-// One recorded pipeline created on the device (through the original functions) and released. 1 = created, 0 = failed.
+// One recorded pipeline created on the device (through the original functions) and released. 1 = created, 0 = failed (t_why).
 int ReplayOne(const Rec& r)
 {
     auto* dev = static_cast<ID3D12Device*>(g_replayDevice);
     Made m;
     void* pso = nullptr;
     HRESULT hr = E_FAIL;
+    t_why = kOk;
     if (r.kind == kKindGfx && r.pod.size() == sizeof(D3D12_GRAPHICS_PIPELINE_STATE_DESC)) {
         D3D12_GRAPHICS_PIPELINE_STATE_DESC d;
         memcpy(&d, r.pod.data(), sizeof d);
         ID3D12RootSignature* rs;
         if (!MakeRs(GetPtr(&d.pRootSignature), &rs)) return 0;
         d.pRootSignature = rs;
-        if (!Shader(&d.VS) || !Shader(&d.PS) || !Shader(&d.DS) || !Shader(&d.HS) || !Shader(&d.GS)) return 0;
+        if (!Shader(&d.VS, &m) || !Shader(&d.PS, &m) || !Shader(&d.DS, &m) || !Shader(&d.HS, &m) || !Shader(&d.GS, &m)) return 0;
         const uint64_t il = GetPtr(&d.InputLayout.pInputElementDescs);
         d.InputLayout.pInputElementDescs = nullptr;
-        if (il && !MakeLayout(il, d.InputLayout.NumElements, &m, &d.InputLayout.pInputElementDescs)) return 0;
+        if (il && !MakeLayout(il, d.InputLayout.NumElements, &m, &d.InputLayout.pInputElementDescs)) return Fail(kWhyLayout);
         hr = reinterpret_cast<GfxFn>(g_rvt->orig[kSlotGfx])(dev, &d, __uuidof(ID3D12PipelineState), &pso);
     } else if (r.kind == kKindCompute && r.pod.size() == sizeof(D3D12_COMPUTE_PIPELINE_STATE_DESC)) {
         D3D12_COMPUTE_PIPELINE_STATE_DESC d;
@@ -893,23 +1063,17 @@ int ReplayOne(const Rec& r)
         ID3D12RootSignature* rs;
         if (!MakeRs(GetPtr(&d.pRootSignature), &rs)) return 0;
         d.pRootSignature = rs;
-        if (!Shader(&d.CS)) return 0;
+        if (!Shader(&d.CS, &m)) return 0;
         hr = reinterpret_cast<ComputeFn>(g_rvt->orig[kSlotCompute])(dev, &d, __uuidof(ID3D12PipelineState), &pso);
     } else if (r.kind == kKindStream && g_rvt->stream) {
         // rebuild the aligned stream from the packed [type][payload] list
-        std::vector<uint64_t> buf;   // 8-byte aligned storage
-        size_t used = 0;
         size_t at = 0;
-        bool ok = true;
         std::vector<uint8_t> stream;
-        while (ok && at + 4 <= r.pod.size()) {
+        while (at + 4 <= r.pod.size()) {
             uint32_t type;
             memcpy(&type, &r.pod[at], 4);
             SubInfo si;
-            if (!SubInfoOf(type, &si) || at + 4 + si.size > r.pod.size()) {
-                ok = false;
-                break;
-            }
+            if (!SubInfoOf(type, &si) || at + 4 + si.size > r.pod.size()) return Fail(kWhyStream);
             const size_t start = (stream.size() + 7) & ~size_t(7);
             stream.resize(start + (si.align == 8 ? 8 : 4) + si.size, 0);
             memcpy(&stream[start], &type, 4);
@@ -917,33 +1081,36 @@ int ReplayOne(const Rec& r)
             memcpy(q, &r.pod[at + 4], si.size);
             if (type == 0) {
                 ID3D12RootSignature* rs;
-                if (!MakeRs(GetPtr(q), &rs)) ok = false;
+                if (!MakeRs(GetPtr(q), &rs)) return 0;
                 memcpy(q, &rs, 8);
             } else if ((type >= 1 && type <= 6) || type == 24 || type == 25) {
-                if (!Shader(reinterpret_cast<D3D12_SHADER_BYTECODE*>(q))) ok = false;
+                if (!Shader(reinterpret_cast<D3D12_SHADER_BYTECODE*>(q), &m)) return 0;
             } else if (type == 12) {
                 const uint64_t h = GetPtr(q);
                 uint32_t n;
                 memcpy(&n, q + 8, 4);
                 const D3D12_INPUT_ELEMENT_DESC* e = nullptr;
-                if (h && !MakeLayout(h, n, &m, &e)) ok = false;
+                if (h && !MakeLayout(h, n, &m, &e)) return Fail(kWhyLayout);
                 memcpy(q, &e, 8);
             }
             at += 4 + si.size;
         }
-        (void)buf;
-        (void)used;
-        if (!ok || at != r.pod.size()) return 0;
+        if (at != r.pod.size()) return Fail(kWhyStream);
         stream.resize((stream.size() + 7) & ~size_t(7));
         std::vector<uint64_t> aligned((stream.size() + 7) / 8);
         memcpy(aligned.data(), stream.data(), stream.size());
         D3D12_PIPELINE_STATE_STREAM_DESC sd{stream.size(), aligned.data()};
         hr = reinterpret_cast<StreamFn>(g_rvt->orig[kSlotStream])(dev, &sd, __uuidof(ID3D12PipelineState), &pso);
     } else {
-        return 0;
+        return Fail(r.kind == kKindStream ? kWhyStream : kWhyBadPod);
     }
     if (SUCCEEDED(hr) && pso) static_cast<IUnknown*>(pso)->Release();
-    return SUCCEEDED(hr) ? 1 : 0;
+    if (FAILED(hr)) {
+        uint32_t none = 0;
+        g_firstHr.compare_exchange_strong(none, static_cast<uint32_t>(hr));
+        return Fail(kWhyCreate);
+    }
+    return 1;
 }
 
 struct OneCtx {
@@ -957,6 +1124,7 @@ bool GuardedOne(OneCtx* c)
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         c->res = -1;
+        t_why = kWhyFault;
         return false;
     }
 }
@@ -976,10 +1144,14 @@ void Worker()
             GuardedOne(&c);
         } catch (...) {
             c.res = -1;
+            t_why = kWhyFault;
         }
         g_replayUs += UsSince(t0);
         if (c.res > 0) g_replayDone++;
-        else g_replayFail++;
+        else {
+            g_replayFail++;
+            g_why[c.res < 0 ? kWhyFault : t_why]++;
+        }
     }
     if (g_replayWorkers.fetch_sub(1) == 1) ReplayFinish();
 }
@@ -991,10 +1163,19 @@ void ReplayFinish()
     Log("[psorec] replay %s: %llu of %zu recorded pipelines created (%llu failed or skipped) in %.1f s (%.1f s of creation time over the threads)",
         stopped ? "stopped (play began)" : "done", static_cast<unsigned long long>(g_replayDone.load()), g_replayTotal,
         static_cast<unsigned long long>(g_replayFail.load()), ms / 1000.0, g_replayUs.load() / 1e6);
+    if (g_replayFail.load()) {
+        char line[512];
+        int at = 0;
+        for (int i = 1; i < kWhyCount; ++i)
+            if (g_why[i].load()) at += snprintf(line + at, sizeof line - at, "%s%s %llu", at ? ", " : "", kWhyName[i], static_cast<unsigned long long>(g_why[i].load()));
+        Log("[psorec] replay did not create %llu pipelines: %s%s", static_cast<unsigned long long>(g_replayFail.load()), line,
+            g_firstHr.load() ? "" : "");
+        if (g_firstHr.load()) Log("[psorec] the first failed pipeline creation returned HRESULT 0x%08X", g_firstHr.load());
+    }
     {
         std::lock_guard<std::mutex> lk(g_rsMu);
         for (auto& e : g_rsMade)
-            if (e.second) e.second->Release();
+            if (e.second.first) e.second.first->Release();
         g_rsMade.clear();
     }
     if (g_replayDevice && g_replayOwnDevice) static_cast<IUnknown*>(g_replayDevice)->Release();
@@ -1017,6 +1198,8 @@ void StartReplay(ReplaySet* set, void* device, VT* vt, bool own, int threads)
     g_replayOwnDevice = own;
     g_replayTotal = set->recs.size();
     g_replayNext = g_replayDone = g_replayFail = g_replayUs = 0;
+    for (auto& w : g_why) w = 0;
+    g_firstHr = 0;
     g_replayStop = false;
     g_replayT0 = GetTickCount64();
     if (threads < 1) threads = 1;

@@ -293,7 +293,7 @@ struct Config {
                                        // memory use and budget instead of 0/0 (game bug; start-up install, live)
     int shaderGateBeforePlay = 1;        // ShaderGateBeforePlay: 0 off, 1 on under Wine/Proton only, 2 everywhere (live)
     int psoRecordReplay = 0;             // PsoRecordReplay: 0 off, 1 record the pipelines created in play and replay them behind the loading screen, 2 measure only
-    int psoRecordMaxMB = 128;            // PsoRecordMaxMB: the record file's size limit
+    int psoRecordMaxMB = 512;            // PsoRecordMaxMB: the record file's size limit
     int psoRecordMinMs = 0;              // not in the shipped ini: only pipelines whose creation took this long are recorded (0 = all)
     int psoReplayThreads = 3;            // not in the shipped ini: replay worker threads (1-8)
     int shaderGateMaxSeconds = 600;      // ShaderGateMaxSeconds: the longest the first load is held

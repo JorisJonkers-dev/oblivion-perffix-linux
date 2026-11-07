@@ -337,7 +337,14 @@ inline void Run()
     PsoRecordTestAttach(&g_dev, path.c_str(), 1, 1, 0, 1);
     PsoRecordTestSetPlay(1);
     std::vector<std::vector<uint8_t>> big;
-    for (int i = 0; i < 5; ++i) big.push_back(Fill(400 * 1024, static_cast<uint8_t>(40 + i)));
+    uint64_t xs = 1234567ull;
+    for (int i = 0; i < 5; ++i) {
+        big.emplace_back(400 * 1024);
+        for (auto& b : big.back()) {
+            xs ^= xs << 13; xs ^= xs >> 7; xs ^= xs << 17;
+            b = static_cast<uint8_t>(xs);
+        }
+    }
     for (int i = 0; i < 5; ++i) {
         auto gg = g;
         gg.pRootSignature = nullptr;
@@ -348,6 +355,53 @@ inline void Run()
     PsoRecordTestFlush();
     c = PsoRecordTestCounts();
     Check(c.full && c.recorded >= 1 && c.recorded <= 2 && c.fileBytes <= (1u << 20), "psorec: PsoRecordMaxMB bounds the file (full flag set, size under the limit)");
+
+    // compression and the cap: a compressible shader is stored small and comes back identical; a record refused at the cap leaves the
+    // blobs of the records before it alone (they were once dropped with it: those pipelines failed to replay)
+    PsoRecordTestReset();
+    InitDev();
+    DeleteFileW(path.c_str());
+    PsoRecordTestAttach(&g_dev, path.c_str(), 1, 1, 0, 1);
+    PsoRecordTestSetPlay(1);
+    {
+        std::vector<uint8_t> rep(200 * 1024);
+        for (size_t i = 0; i < rep.size(); ++i) rep[i] = static_cast<uint8_t>("DXIL shader bytecode pattern 0123456789"[i % 40]);
+        std::vector<std::vector<uint8_t>> rnd(4, std::vector<uint8_t>(400 * 1024));
+        uint64_t x = 88172645463325252ull;
+        for (auto& v : rnd)
+            for (auto& b : v) {
+                x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+                b = static_cast<uint8_t>(x);
+            }
+        auto gg = g;
+        gg.pRootSignature = nullptr;
+        gg.VS = Bc(rep);
+        reinterpret_cast<GfxFn>(g_devVt[10])(&g_dev, &gg, __uuidof(ID3D12PipelineState), &o);
+        PsoRecordTestFlush();
+        c = PsoRecordTestCounts();
+        Check(c.recorded == 1 && c.fileBytes < 30000, "psorec: a compressible 200 KB shader is stored in well under 30 KB (LZ4-style codec)");
+        gg.VS = Bc(rnd[0]);
+        reinterpret_cast<GfxFn>(g_devVt[10])(&g_dev, &gg, __uuidof(ID3D12PipelineState), &o);   // pending when the cap is hit
+        gg.VS = Bc(rnd[1]);
+        reinterpret_cast<GfxFn>(g_devVt[10])(&g_dev, &gg, __uuidof(ID3D12PipelineState), &o);
+        gg.VS = Bc(rnd[2]);
+        reinterpret_cast<GfxFn>(g_devVt[10])(&g_dev, &gg, __uuidof(ID3D12PipelineState), &o);   // refused: over 1 MB
+        PsoRecordTestFlush();
+        c = PsoRecordTestCounts();
+        Check(c.full && c.recorded == 3 && c.fileBytes <= (1u << 20), "psorec: the cap refuses the third incompressible shader, file under the limit");
+        const uint64_t rec = c.recorded;
+        PsoRecordTestReset();
+        InitDev();
+        PsoRecordTestAttach(&g_dev, path.c_str(), 1, 1, 0, 2);
+        PsoRecordTestWait(5000);
+        c = PsoRecordTestCounts();
+        bool sameRep = false, sameRnd = false;
+        for (auto& v : g_seen) {
+            if (v.vs == rep) sameRep = true;
+            if (v.vs == rnd[0]) sameRnd = true;
+        }
+        Check(c.replayed == rec && c.replayFailed == 0 && sameRep && sameRnd, "psorec: all recorded pipelines replay after a refused one (no lost blobs); compressed and raw blobs come back identical");
+    }
 
     // measure only: counts, writes nothing
     PsoRecordTestReset();
