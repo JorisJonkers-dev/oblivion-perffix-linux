@@ -1324,29 +1324,31 @@ void PsoRecordTick(int mode, int maxMB, int minMs, int threads, const wchar_t* d
         if (mode == 1) StartReplay(set, dev, vt, false, threads);
         return;
     }
-    if (PlayStarted()) {
-        if (!g_playAt) g_playAt = now;
-        if (!g_warned && now - g_playAt > 30000 && g_calls.load() == 0 && g_hookSeen.load() == 0) {
-            g_warned = true;
-            Log("[psorec] WARNING: hook sees no game PSO creations (%llu D3D12CreateDevice calls seen, %d vtable(s) hooked, none of them called in 30 s of play): "
-                "nothing is counted or recorded; looking for the device through the adapter",
-                static_cast<unsigned long long>(g_createSeen.load()), g_nvt.load());
-            bool own = false;
-            if (void* dev = FindDevice(&own)) {
-                OnCreated(dev, "found through the adapter (after the warning)");
-                static_cast<IUnknown*>(dev)->Release();
-            }
+    const bool inPlay = PlayStarted();
+    if (inPlay && !g_playAt) {
+        g_playAt = now;
+        Log("[psorec] play recognised (%s): creations are counted from here", g_forcePlay.load() >= 0 ? "forced" : "PsoPrecompileFast's in-play state or the released gate");
+    }
+    if (inPlay && !g_warned && now - g_playAt > 30000 && g_calls.load() == 0 && g_hookSeen.load() == 0) {
+        g_warned = true;
+        Log("[psorec] WARNING: hook sees no game PSO creations (%llu D3D12CreateDevice calls seen, %d vtable(s) hooked, none of them called in 30 s of play): "
+            "nothing is counted or recorded; looking for the device through the adapter",
+            static_cast<unsigned long long>(g_createSeen.load()), g_nvt.load());
+        bool own = false;
+        if (void* dev = FindDevice(&own)) {
+            OnCreated(dev, "found through the adapter (after the warning)");
+            static_cast<IUnknown*>(dev)->Release();
         }
-        if (now - g_lastStat >= 60000) {
-            g_lastStat = now;
-            PrintStats(false);
-        }
-        if (mode == 1 && now - g_lastFlush >= 10000) {
-            g_lastFlush = now;
-            Flush();
-        }
-    } else {
+    }
+    if (now - g_lastStat >= 60000) {   // once a minute, in play or not, so that silence cannot happen
         g_lastStat = now;
+        if (inPlay) PrintStats(false);
+        else Log("[psorec] play not recognised yet (%llu hooked calls seen outside play, %llu root signatures)",
+                 static_cast<unsigned long long>(g_hookSeen.load()), static_cast<unsigned long long>(g_rsKnown.load()));
+    }
+    if (mode == 1 && inPlay && now - g_lastFlush >= 10000) {
+        g_lastFlush = now;
+        Flush();
     }
 }
 

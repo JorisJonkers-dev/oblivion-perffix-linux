@@ -423,7 +423,10 @@ void CALLBACK TimerProc(HWND, UINT, UINT_PTR, DWORD)
     if (!ok) {
         StopTimer();
         Log("[pso] a look at the game's state faulted: the game's own pace from here on");
-    } else if (!g_running && (g_firstSeenMs || GetTickCount64() - g_timerStart > kIdleStopMs) && g_applied.load() == req) {
+    } else if (!g_running && (g_firstSeenMs || GetTickCount64() - g_timerStart > kIdleStopMs) && g_applied.load() == req &&
+               (g_played.load() || !g_menuSeen)) {
+        // (not before play has been seen once the menu was: the looks are what recognise play, after a precompile that ended
+        // behind the gate no other look would come and PsoRecordReplay would never start counting)
         StopTimer();   // nothing to do until the game sets a mode again (the next map load restarts it)
     }
     QueryPerformanceCounter(&t1);
@@ -798,7 +801,14 @@ void SetShaderGate(bool on, uint32_t maxSeconds)
     g_gateMaxSec = maxSeconds < 10 ? 10 : maxSeconds;
 }
 
-bool PsoPlayStarted() { return g_played.load(); }
+// play for PsoRecordReplay: the look at the freeze state saw it, or the gate has released the first load after the main menu, or the
+// precompile finished with the main menu seen and a loading screen's time has passed (the looks alone left it false in a live run)
+bool PsoPlayStarted()
+{
+    if (g_played.load() || g_gateDone) return true;
+    const uint64_t done = g_doneMs.load();
+    return done && g_menuSeen && Now() - done > 45000;
+}
 
 bool ShaderGateOn() { return g_gateOn.load(); }
 
