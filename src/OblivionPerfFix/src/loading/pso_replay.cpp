@@ -8,8 +8,13 @@
 // a pipeline the machine never saw is a real compile) and UE may keep the object hidden until it is done.
 //
 // Measure (PsoRecordReplay=1 or 2). The three creation functions of the game's device (and CreateRootSignature) are hooked
-// in the device's vtable (the slots 10, 11, 47 and 16 of the one vtable every device of the runtime shares; the game's device is
-// found as memory_monitor.cpp finds it: D3D12CreateDevice on the game's adapter returns the game's own device). Every call
+// in the device's vtable (slots 10, 11, 47 and 16). The game's device is reached deterministically: at start-up d3d12.dll's
+// export table entry for D3D12CreateDevice is pointed at a jump stub as soon as the DLL is mapped (a DLL load notification), so
+// the wrapper hooks the vtable of every device the process creates before the game can call it. vkd3d-proton does not give
+// every device the same vtable (a device made on the side, as an earlier version did, was not the game's), so each hooked
+// vtable keeps its own originals and the device used for the replay is the one a hooked call came from. If no creation call is
+// seen (redirect not possible) the device is found through its adapter after 20 s; if no hooked call is seen in 30 s of play a
+// WARNING line says so. Every call
 // that happens once play has begun (PsoPrecompileFast's "in play") is timed; each minute of play one line is logged:
 //   [psorec] in play: N new PSOs, total X ms, max Y ms (...)
 // "new" is a pipeline that the record file from earlier sessions did not already hold, i.e. one that was not replayed.
@@ -67,10 +72,39 @@ std::atomic<int> g_mode{0};            // 0 off, 1 record + replay, 2 measure on
 std::atomic<int> g_forcePlay{-1};      // self-test: -1 ask PsoPlayStarted, 0/1 forced
 std::atomic<uint32_t> g_minUs{0};
 std::atomic<uint64_t> g_maxBytes{128ull << 20};
-bool g_hooked = false;
-void** g_vtable = nullptr;
-void* g_orig[kSlotCount] = {};
-bool g_haveStream = false;
+// One entry per device vtable hooked (vkd3d-proton does not give every device the same vtable: the first live run's hooks on a
+// second device never saw the game's calls). A hook finds its originals through the vtable of the device it was called on.
+struct VT {
+    void** vt;
+    void* orig[kSlotCount];
+    bool stream;
+};
+constexpr int kMaxVt = 6;
+VT g_vts[kMaxVt];
+std::atomic<int> g_nvt{0};
+VT* FindVt(void** vt)
+{
+    const int n = g_nvt.load();
+    for (int i = 0; i < n; ++i)
+        if (g_vts[i].vt == vt) return &g_vts[i];
+    return nullptr;
+}
+VT* Of(void* self)
+{
+    VT* v = FindVt(*static_cast<void***>(self));
+    return v ? v : &g_vts[0];
+}
+VT* g_rvt = nullptr;                      // the replay device's entry
+std::atomic<void*> g_candidate{nullptr};  // first device a D3D12CreateDevice call of the process returned (a reference is held)
+std::atomic<void*> g_gameDev{nullptr};    // a device a hooked pipeline / root-signature call was made on (the game's), reference held
+std::atomic<uint64_t> g_hookSeen{0};      // every hooked call, in play or not
+std::atomic<uint64_t> g_createSeen{0};    // D3D12CreateDevice calls that returned a device
+ULONGLONG g_candidateAt = 0, g_firstTick = 0, g_playAt = 0;
+bool g_started = false, g_warned = false, g_fallbackTried = false;
+void* g_realCreate = nullptr;             // the real D3D12CreateDevice
+uint32_t* g_eatSlot = nullptr;
+uint32_t g_eatOrig = 0;
+const char* g_how = "";
 std::wstring g_path;
 thread_local bool t_inReplay = false;
 
@@ -618,6 +652,8 @@ void NoteStats(uint64_t us, bool isNew)
     if (us >= 20000) g_iSlow++;
 }
 
+void NoteGameDevice(void* self);
+
 struct Ctx {
     int what;   // 0 gfx, 1 compute, 2 stream
     const void* desc;
@@ -686,6 +722,8 @@ bool Guarded(void (*fn)(Ctx*), Ctx* c)
 template <class Fn, class Desc, int What>
 HRESULT Common(Fn orig, void* self, const Desc* d, REFIID riid, void** ppv)
 {
+    g_hookSeen++;
+    if (!t_inReplay) NoteGameDevice(self);
     if (g_mode.load() == 0 || t_inReplay || !d) return orig(self, d, riid, ppv);
     const uint64_t t0 = Qpc();
     const HRESULT hr = orig(self, d, riid, ppv);
@@ -699,15 +737,15 @@ HRESULT Common(Fn orig, void* self, const Desc* d, REFIID riid, void** ppv)
 
 HRESULT STDMETHODCALLTYPE HookGfx(void* self, const D3D12_GRAPHICS_PIPELINE_STATE_DESC* d, REFIID riid, void** ppv)
 {
-    return Common<GfxFn, D3D12_GRAPHICS_PIPELINE_STATE_DESC, 0>(reinterpret_cast<GfxFn>(g_orig[kSlotGfx]), self, d, riid, ppv);
+    return Common<GfxFn, D3D12_GRAPHICS_PIPELINE_STATE_DESC, 0>(reinterpret_cast<GfxFn>(Of(self)->orig[kSlotGfx]), self, d, riid, ppv);
 }
 HRESULT STDMETHODCALLTYPE HookCompute(void* self, const D3D12_COMPUTE_PIPELINE_STATE_DESC* d, REFIID riid, void** ppv)
 {
-    return Common<ComputeFn, D3D12_COMPUTE_PIPELINE_STATE_DESC, 1>(reinterpret_cast<ComputeFn>(g_orig[kSlotCompute]), self, d, riid, ppv);
+    return Common<ComputeFn, D3D12_COMPUTE_PIPELINE_STATE_DESC, 1>(reinterpret_cast<ComputeFn>(Of(self)->orig[kSlotCompute]), self, d, riid, ppv);
 }
 HRESULT STDMETHODCALLTYPE HookStream(void* self, const D3D12_PIPELINE_STATE_STREAM_DESC* d, REFIID riid, void** ppv)
 {
-    return Common<StreamFn, D3D12_PIPELINE_STATE_STREAM_DESC, 2>(reinterpret_cast<StreamFn>(g_orig[kSlotStream]), self, d, riid, ppv);
+    return Common<StreamFn, D3D12_PIPELINE_STATE_STREAM_DESC, 2>(reinterpret_cast<StreamFn>(Of(self)->orig[kSlotStream]), self, d, riid, ppv);
 }
 
 struct RsCtx {
@@ -736,7 +774,9 @@ bool GuardedRs(RsCtx* c)
 
 HRESULT STDMETHODCALLTYPE HookRootSig(void* self, UINT mask, const void* blob, SIZE_T len, REFIID riid, void** ppv)
 {
-    const HRESULT hr = reinterpret_cast<RootSigFn>(g_orig[kSlotRootSig])(self, mask, blob, len, riid, ppv);
+    g_hookSeen++;
+    if (!t_inReplay) NoteGameDevice(self);
+    const HRESULT hr = reinterpret_cast<RootSigFn>(Of(self)->orig[kSlotRootSig])(self, mask, blob, len, riid, ppv);
     if (g_mode.load() == 1 && !t_inReplay && SUCCEEDED(hr) && ppv && *ppv) {
         RsCtx c{blob, len, *ppv};
         GuardedRs(&c);
@@ -805,7 +845,7 @@ bool MakeRs(uint64_t h, ID3D12RootSignature** out)
     ID3D12RootSignature* rs = nullptr;
     if (b) {
         auto* dev = static_cast<ID3D12Device*>(g_replayDevice);
-        const auto fn = reinterpret_cast<RootSigFn>(g_orig[kSlotRootSig]);
+        const auto fn = reinterpret_cast<RootSigFn>(g_rvt->orig[kSlotRootSig]);
         void* obj = nullptr;
         if (FAILED(fn(dev, 0, b->data.data(), b->data.size(), __uuidof(ID3D12RootSignature), &obj))) obj = nullptr;
         rs = static_cast<ID3D12RootSignature*>(obj);
@@ -846,7 +886,7 @@ int ReplayOne(const Rec& r)
         const uint64_t il = GetPtr(&d.InputLayout.pInputElementDescs);
         d.InputLayout.pInputElementDescs = nullptr;
         if (il && !MakeLayout(il, d.InputLayout.NumElements, &m, &d.InputLayout.pInputElementDescs)) return 0;
-        hr = reinterpret_cast<GfxFn>(g_orig[kSlotGfx])(dev, &d, __uuidof(ID3D12PipelineState), &pso);
+        hr = reinterpret_cast<GfxFn>(g_rvt->orig[kSlotGfx])(dev, &d, __uuidof(ID3D12PipelineState), &pso);
     } else if (r.kind == kKindCompute && r.pod.size() == sizeof(D3D12_COMPUTE_PIPELINE_STATE_DESC)) {
         D3D12_COMPUTE_PIPELINE_STATE_DESC d;
         memcpy(&d, r.pod.data(), sizeof d);
@@ -854,8 +894,8 @@ int ReplayOne(const Rec& r)
         if (!MakeRs(GetPtr(&d.pRootSignature), &rs)) return 0;
         d.pRootSignature = rs;
         if (!Shader(&d.CS)) return 0;
-        hr = reinterpret_cast<ComputeFn>(g_orig[kSlotCompute])(dev, &d, __uuidof(ID3D12PipelineState), &pso);
-    } else if (r.kind == kKindStream && g_haveStream) {
+        hr = reinterpret_cast<ComputeFn>(g_rvt->orig[kSlotCompute])(dev, &d, __uuidof(ID3D12PipelineState), &pso);
+    } else if (r.kind == kKindStream && g_rvt->stream) {
         // rebuild the aligned stream from the packed [type][payload] list
         std::vector<uint64_t> buf;   // 8-byte aligned storage
         size_t used = 0;
@@ -898,7 +938,7 @@ int ReplayOne(const Rec& r)
         std::vector<uint64_t> aligned((stream.size() + 7) / 8);
         memcpy(aligned.data(), stream.data(), stream.size());
         D3D12_PIPELINE_STATE_STREAM_DESC sd{stream.size(), aligned.data()};
-        hr = reinterpret_cast<StreamFn>(g_orig[kSlotStream])(dev, &sd, __uuidof(ID3D12PipelineState), &pso);
+        hr = reinterpret_cast<StreamFn>(g_rvt->orig[kSlotStream])(dev, &sd, __uuidof(ID3D12PipelineState), &pso);
     } else {
         return 0;
     }
@@ -964,8 +1004,9 @@ void ReplayFinish()
     g_replayBusy = false;
 }
 
-void StartReplay(ReplaySet* set, void* device, bool own, int threads)
+void StartReplay(ReplaySet* set, void* device, VT* vt, bool own, int threads)
 {
+    g_rvt = vt;
     if (!set || set->recs.empty() || !device) {
         delete set;
         if (device && own) static_cast<IUnknown*>(device)->Release();
@@ -989,35 +1030,169 @@ void StartReplay(ReplaySet* set, void* device, bool own, int threads)
 
 // ---- device ----
 
-bool Install(void* device)
+VT* Install(void* device)
 {
-    if (g_hooked) return true;
-    if (!device) return false;
+    if (!device) return nullptr;
     void** vt = *static_cast<void***>(device);
-    if (!vt) return false;
-    for (size_t s : {kSlotGfx, kSlotCompute, kSlotRootSig}) g_orig[s] = vt[s];
+    if (!vt) return nullptr;
+    if (VT* have = FindVt(vt)) return have;
+    const int n = g_nvt.load();
+    if (n >= kMaxVt) return nullptr;
+    VT& v = g_vts[n];
+    memset(&v, 0, sizeof v);
+    v.vt = vt;
+    for (size_t s : {kSlotGfx, kSlotCompute, kSlotRootSig}) v.orig[s] = vt[s];
     ID3D12Device2* d2 = nullptr;
-    g_haveStream = false;
     if (SUCCEEDED(static_cast<IUnknown*>(device)->QueryInterface(__uuidof(ID3D12Device2), reinterpret_cast<void**>(&d2))) && d2) {
-        g_orig[kSlotStream] = vt[kSlotStream];
-        g_haveStream = true;
+        v.orig[kSlotStream] = vt[kSlotStream];
+        v.stream = true;
         d2->Release();
     }
-    g_vtable = vt;
+    g_nvt.store(n + 1);   // published before the patch: a hook finds its entry at once
     bool ok = WritePointer(&vt[kSlotGfx], reinterpret_cast<void*>(&HookGfx)) &&
               WritePointer(&vt[kSlotCompute], reinterpret_cast<void*>(&HookCompute)) &&
               WritePointer(&vt[kSlotRootSig], reinterpret_cast<void*>(&HookRootSig));
-    if (ok && g_haveStream) ok = WritePointer(&vt[kSlotStream], reinterpret_cast<void*>(&HookStream));
-    g_hooked = ok;
-    return ok;
+    if (ok && v.stream) ok = WritePointer(&vt[kSlotStream], reinterpret_cast<void*>(&HookStream));
+    if (!ok) {
+        for (size_t s : {kSlotGfx, kSlotCompute, kSlotRootSig}) WritePointer(&vt[s], v.orig[s]);
+        if (v.stream) WritePointer(&vt[kSlotStream], v.orig[kSlotStream]);
+        return nullptr;   // the entry stays (harmless)
+    }
+    return &v;
 }
 
 void Unhook()
 {
-    if (!g_hooked) return;
-    for (size_t s : {kSlotGfx, kSlotCompute, kSlotRootSig}) WritePointer(&g_vtable[s], g_orig[s]);
-    if (g_haveStream) WritePointer(&g_vtable[kSlotStream], g_orig[kSlotStream]);
-    g_hooked = false;
+    const int n = g_nvt.load();
+    for (int i = 0; i < n; ++i) {
+        VT& v = g_vts[i];
+        for (size_t s : {kSlotGfx, kSlotCompute, kSlotRootSig}) WritePointer(&v.vt[s], v.orig[s]);
+        if (v.stream) WritePointer(&v.vt[kSlotStream], v.orig[kSlotStream]);
+    }
+    g_nvt.store(0);
+}
+
+// A device a D3D12CreateDevice call returned: its vtable is hooked at once, before the game can call it.
+void OnCreated(void* dev, const char* how)
+{
+    if (!dev || !Install(dev)) return;
+    g_createSeen++;
+    void* none = nullptr;
+    static_cast<IUnknown*>(dev)->AddRef();
+    if (g_candidate.compare_exchange_strong(none, dev)) {
+        g_candidateAt = GetTickCount64();
+        g_how = how;
+    } else {
+        static_cast<IUnknown*>(dev)->Release();
+    }
+}
+
+// A hooked call was made on this device: it is the game's (a probe device the game made and dropped never gets here).
+void NoteGameDevice(void* self)
+{
+    if (g_gameDev.load() == self) return;
+    if (g_gameDev.load()) return;   // the first device that calls; a second one does not take over
+    static_cast<IUnknown*>(self)->AddRef();
+    void* none = nullptr;
+    if (!g_gameDev.compare_exchange_strong(none, self)) static_cast<IUnknown*>(self)->Release();
+}
+
+// ---- the game's D3D12CreateDevice: d3d12.dll's export table entry pointed at a stub, as soon as the DLL is mapped ----
+
+HRESULT WINAPI HookCreateDevice(IUnknown* adapter, D3D_FEATURE_LEVEL fl, REFIID riid, void** pp)
+{
+    const HRESULT hr = reinterpret_cast<PFN_D3D12_CREATE_DEVICE>(g_realCreate)(adapter, fl, riid, pp);
+    if (SUCCEEDED(hr) && pp && *pp && g_mode.load() > 0) OnCreated(*pp, "from the game's D3D12CreateDevice call");
+    return hr;
+}
+
+uint8_t* AllocNear(uint8_t* base)
+{
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + reinterpret_cast<const IMAGE_DOS_HEADER*>(base)->e_lfanew);
+    uintptr_t at = (reinterpret_cast<uintptr_t>(base) + nt->OptionalHeader.SizeOfImage + 0xFFFF) & ~uintptr_t(0xFFFF);
+    for (int i = 0; i < 2000; ++i, at += 0x100000) {
+        void* p = VirtualAlloc(reinterpret_cast<void*>(at), 0x1000, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+        if (p) return static_cast<uint8_t*>(p);
+    }
+    return nullptr;
+}
+
+// Points the export `name` of the mapped module at a stub that jumps to target. Returns the real address (0: not possible);
+// slot / rva give the table entry and its old value (to put back).
+uint8_t* PatchExport(HMODULE module, const char* name, void* target, uint32_t** slotOut, uint32_t* oldRva, uint8_t** stubOut)
+{
+    auto* base = reinterpret_cast<uint8_t*>(module);
+    __try {
+        const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + reinterpret_cast<const IMAGE_DOS_HEADER*>(base)->e_lfanew);
+        const auto& dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+        if (!dir.VirtualAddress) return nullptr;
+        const auto* ex = reinterpret_cast<const IMAGE_EXPORT_DIRECTORY*>(base + dir.VirtualAddress);
+        const auto* names = reinterpret_cast<const uint32_t*>(base + ex->AddressOfNames);
+        const auto* ords = reinterpret_cast<const uint16_t*>(base + ex->AddressOfNameOrdinals);
+        auto* funcs = reinterpret_cast<uint32_t*>(base + ex->AddressOfFunctions);
+        for (uint32_t i = 0; i < ex->NumberOfNames; ++i) {
+            if (strcmp(reinterpret_cast<const char*>(base + names[i]), name) != 0) continue;
+            uint32_t* slot = &funcs[ords[i]];
+            const uint32_t rva = *slot;
+            if (rva >= dir.VirtualAddress && rva < dir.VirtualAddress + dir.Size) return nullptr;   // a forwarder
+            uint8_t* stub = AllocNear(base);
+            if (!stub) return nullptr;
+            const uintptr_t off = reinterpret_cast<uintptr_t>(stub) - reinterpret_cast<uintptr_t>(base);
+            if (off > 0xFFFFFFF0u) return nullptr;
+            const uint8_t jmp[6] = {0xFF, 0x25, 0, 0, 0, 0};
+            memcpy(stub, jmp, 6);
+            memcpy(stub + 6, &target, 8);
+            DWORD old;
+            if (!VirtualProtect(slot, 4, PAGE_READWRITE, &old)) return nullptr;
+            *slot = static_cast<uint32_t>(off);
+            VirtualProtect(slot, 4, old, &old);
+            *slotOut = slot;
+            *oldRva = rva;
+            *stubOut = stub;
+            return base + rva;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    return nullptr;
+}
+
+void RestoreExport(uint32_t* slot, uint32_t rva)
+{
+    DWORD old;
+    if (slot && VirtualProtect(slot, 4, PAGE_READWRITE, &old)) {
+        *slot = rva;
+        VirtualProtect(slot, 4, old, &old);
+    }
+}
+
+uint8_t* g_createStub = nullptr;
+void PatchD3d12(HMODULE m)
+{
+    if (g_realCreate) return;
+    uint8_t* real = PatchExport(m, "D3D12CreateDevice", reinterpret_cast<void*>(&HookCreateDevice), &g_eatSlot, &g_eatOrig, &g_createStub);
+    if (!real) {
+        Log("[psorec] d3d12.dll's D3D12CreateDevice export could not be redirected: the game's device will be found through its adapter instead");
+        return;
+    }
+    g_realCreate = real;
+    Log("[psorec] d3d12.dll's D3D12CreateDevice export redirected: the game's device is hooked as it is created");
+}
+
+struct UStr {
+    USHORT len, max;
+    PWSTR buf;
+};
+struct DllNote {
+    ULONG flags;
+    const UStr* full;
+    const UStr* base;
+    PVOID dllBase;
+    ULONG size;
+};
+VOID CALLBACK DllLoaded(ULONG reason, const DllNote* d, PVOID)
+{
+    if (reason != 1 || !d || !d->base || !d->base->buf) return;
+    if (d->base->len == 18 && _wcsnicmp(d->base->buf, L"d3d12.dll", 9) == 0) PatchD3d12(static_cast<HMODULE>(d->dllBase));
 }
 
 // The game's device as memory_monitor.cpp reaches it: D3D12CreateDevice on the game's adapter.
@@ -1082,6 +1257,25 @@ void ApplyConfig(int mode, int maxMB, int minMs)
 
 bool PsoReplayBusy() { return g_replayBusy.load(); }
 
+// Start-up (ahead of the game's device): the export redirect, so the game's own D3D12CreateDevice result is hooked.
+bool PsoRecordInstallEarly(int mode)
+{
+    if (mode <= 0) return false;
+    g_mode = mode > 2 ? 2 : mode;
+    if (HMODULE m = GetModuleHandleW(L"d3d12.dll")) PatchD3d12(m);
+    if (g_realCreate) return true;
+    HMODULE nt = GetModuleHandleW(L"ntdll.dll");
+    using RegFn = LONG(NTAPI*)(ULONG, void*, PVOID, PVOID*);
+    auto reg = nt ? reinterpret_cast<RegFn>(GetProcAddress(nt, "LdrRegisterDllNotification")) : nullptr;
+    PVOID cookie = nullptr;
+    if (!reg || reg(0, reinterpret_cast<void*>(&DllLoaded), nullptr, &cookie) != 0) {
+        Log("[psorec] no DLL load notification: the game's device will be found through its adapter instead");
+        return false;
+    }
+    Log("[psorec] waiting for d3d12.dll to be mapped to redirect its D3D12CreateDevice");
+    return true;
+}
+
 void PsoRecordTick(int mode, int maxMB, int minMs, int threads, const wchar_t* dir)
 {
     ApplyConfig(mode, maxMB, minMs);
@@ -1090,36 +1284,59 @@ void PsoRecordTick(int mode, int maxMB, int minMs, int threads, const wchar_t* d
         return;
     }
     const ULONGLONG now = GetTickCount64();
-    if (!g_hooked) {
-        if (now < g_nextTry) return;
-        g_nextTry = now + 1000;
-        bool own = false;
-        void* dev = FindDevice(&own);
-        if (!dev) return;
+    if (!g_firstTick) g_firstTick = now;
+    if (!g_started) {
+        // fallback: no D3D12CreateDevice call was seen (redirect not possible, or the game created its device another way)
+        if (!g_candidate.load() && !g_gameDev.load() && now - g_firstTick > 20000 && now >= g_nextTry && GetModuleHandleW(L"D3D12Core.dll")) {
+            g_nextTry = now + 5000;
+            bool own = false;
+            void* dev = FindDevice(&own);
+            if (dev) {
+                if (!g_fallbackTried) Log("[psorec] no D3D12CreateDevice call of the game was seen after 20 s: using the device found through its adapter (%s)",
+                                          own ? "a device of our own: may not be the game's" : "the game's");
+                g_fallbackTried = true;
+                OnCreated(dev, "found through the adapter (fallback)");
+                static_cast<IUnknown*>(dev)->Release();
+            }
+        }
+        void* dev = g_gameDev.load();
+        bool confirmed = dev != nullptr;
+        if (!dev) {
+            dev = g_candidate.load();
+            if (!dev || now - g_candidateAt < 30000) return;   // wait for a hooked call to name the game's device
+        }
+        VT* vt = FindVt(*static_cast<void***>(dev));
+        if (!vt) return;
+        g_started = true;
         g_stamp = ExeStamp();
         g_path = std::wstring(dir) + L"\\OblivionPerfFix-psorecord.bin";
-        if (!Install(dev)) {
-            Log("[psorec] could not hook the device's pipeline creation functions: not installed");
-            static_cast<IUnknown*>(dev)->Release();
-            g_nextTry = ~0ull;
-            return;
-        }
         ReplaySet* set = nullptr;
         if (mode == 1) {
             std::lock_guard<std::mutex> lk(g_mu);
             set = LoadRecord(true);
         }
         g_lastStat = g_lastFlush = now;
-        Log("[psorec] %s: device found (%s), pipeline creation hooked (graphics, compute%s, root signatures), %zu pipelines in the record "
-            "(%.1f MB; limit %.0f MB)%s; PsoPrecompileFast's \"in play\" starts the counting",
-            mode == 1 ? "record and replay" : "measure only", own ? "a device of our own" : "the game's", g_haveStream ? ", stream" : "",
-            g_loadedPso.size(), g_fileBytes / 1048576.0, g_maxBytes.load() / 1048576.0,
-            mode == 1 ? "" : " (nothing written)");
-        if (mode == 1) StartReplay(set, dev, own, threads);
-        else static_cast<IUnknown*>(dev)->Release();
+        Log("[psorec] %s: the game's device %s (%s), pipeline creation hooked (graphics, compute%s, root signatures; %d vtable%s), %zu "
+            "pipelines in the record (%.1f MB; limit %.0f MB)%s; PsoPrecompileFast's \"in play\" starts the counting",
+            mode == 1 ? "record and replay" : "measure only", confirmed ? "confirmed by its first hooked call" : "NOT confirmed (no hooked call seen in 30 s)",
+            g_how, vt->stream ? ", stream" : "", g_nvt.load(), g_nvt.load() == 1 ? "" : "s", g_loadedPso.size(), g_fileBytes / 1048576.0,
+            g_maxBytes.load() / 1048576.0, mode == 1 ? "" : " (nothing written)");
+        if (mode == 1) StartReplay(set, dev, vt, false, threads);
         return;
     }
     if (PlayStarted()) {
+        if (!g_playAt) g_playAt = now;
+        if (!g_warned && now - g_playAt > 30000 && g_calls.load() == 0 && g_hookSeen.load() == 0) {
+            g_warned = true;
+            Log("[psorec] WARNING: hook sees no game PSO creations (%llu D3D12CreateDevice calls seen, %d vtable(s) hooked, none of them called in 30 s of play): "
+                "nothing is counted or recorded; looking for the device through the adapter",
+                static_cast<unsigned long long>(g_createSeen.load()), g_nvt.load());
+            bool own = false;
+            if (void* dev = FindDevice(&own)) {
+                OnCreated(dev, "found through the adapter (after the warning)");
+                static_cast<IUnknown*>(dev)->Release();
+            }
+        }
         if (now - g_lastStat >= 60000) {
             g_lastStat = now;
             PrintStats(false);
@@ -1141,15 +1358,34 @@ bool PsoRecordTestAttach(void* device, const wchar_t* path, int mode, int maxMB,
     ApplyConfig(mode, maxMB, minMs);
     g_stamp = 0x5EED0001;
     g_path = path;
-    if (!Install(device)) return false;
+    VT* vt = Install(device);
+    if (!vt) return false;
     ReplaySet* set = nullptr;
     if (mode == 1) {
         std::lock_guard<std::mutex> lk(g_mu);
         set = LoadRecord(true);
     }
-    if (mode == 1) StartReplay(set, device, false, threads);
+    if (mode == 1) StartReplay(set, device, vt, false, threads);
     return true;
 }
+// The game's creation path with a fake D3D12CreateDevice: the wrapper hooks what it returns.
+long PsoRecordTestCreateDevice(void* fakeReal, void** out)
+{
+    g_realCreate = fakeReal;
+    return HookCreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), out);
+}
+void* PsoRecordTestGameDevice() { return g_gameDev.load(); }
+void* PsoRecordTestCandidate() { return g_candidate.load(); }
+// The export redirect on a real mapped module: returns the stub GetProcAddress now hands out (0: not possible); restore puts it back.
+void* PsoRecordTestPatchExport(HMODULE m, const char* name, void* target, void** restoreSlot, uint32_t* restoreRva)
+{
+    uint32_t* slot = nullptr;
+    uint8_t* stub = nullptr;
+    if (!PatchExport(m, name, target, &slot, restoreRva, &stub)) return nullptr;
+    *restoreSlot = slot;
+    return stub;
+}
+void PsoRecordTestRestoreExport(void* slot, uint32_t rva) { RestoreExport(static_cast<uint32_t*>(slot), rva); }
 void PsoRecordTestFlush() { Flush(); }
 bool PsoRecordTestWait(uint32_t ms)
 {
@@ -1160,6 +1396,11 @@ bool PsoRecordTestWait(uint32_t ms)
 void PsoRecordTestReset()
 {
     Unhook();
+    g_candidate = nullptr;
+    g_gameDev = nullptr;
+    g_realCreate = nullptr;
+    g_hookSeen = g_createSeen = 0;
+    g_rvt = nullptr;
     std::lock_guard<std::mutex> lk(g_mu);
     g_rsOf.clear();
     g_rsBlobs.clear();

@@ -519,6 +519,8 @@ void Init(const char* loadedVia, bool proxyOk, bool beforeGameCode)
         if (InstallOsPageCache(beforeGameCode, Directory(g_iniPath).c_str(), osTrace))
             SetOsPageCache(cfg.osPageCache, cfg.osPageCacheMB, cfg.osPageCacheTrimSeconds, false, cfg.osPageCacheKeepMs, osTrace);
     } else Log("[oscache] disabled in OblivionPerfFix.ini (takes a restart to switch on)");
+    // PsoRecordReplay: d3d12.dll's D3D12CreateDevice redirected as soon as the DLL is mapped (start-up only; the monitor thread does the rest).
+    if (cfg.psoRecordReplay > 0) PsoRecordInstallEarly(cfg.psoRecordReplay);
     // PsoPrecompileFast: SetBatchMode's entry detour, installed only if enabled at startup; afterwards the ini switches it live.
     if (cfg.psoPrecompileFast) {
         SetPsoPrecompileFastBudget(static_cast<float>(cfg.psoPrecompileFastBudgetMs < 1 ? 1 : cfg.psoPrecompileFastBudgetMs),

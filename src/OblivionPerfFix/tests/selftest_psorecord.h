@@ -174,6 +174,26 @@ using CompFn = HRESULT(STDMETHODCALLTYPE*)(void*, const D3D12_COMPUTE_PIPELINE_S
 using StrFn = HRESULT(STDMETHODCALLTYPE*)(void*, const D3D12_PIPELINE_STATE_STREAM_DESC*, REFIID, void**);
 using RsFn = HRESULT(STDMETHODCALLTYPE*)(void*, UINT, const void*, SIZE_T, REFIID, void**);
 
+inline Dev g_dev2{nullptr};
+inline void* g_dev2Vt[64];
+inline int g_dev2Gfx = 0;
+inline HRESULT STDMETHODCALLTYPE Dev2Gfx(void* s, const D3D12_GRAPHICS_PIPELINE_STATE_DESC* d, REFIID r, void** pp)
+{
+    ++g_dev2Gfx;
+    return DevGfx(s, d, r, pp);
+}
+inline HRESULT WINAPI FakeCreate1(IUnknown*, D3D_FEATURE_LEVEL, REFIID, void** pp)
+{
+    *pp = &g_dev;
+    return S_OK;
+}
+inline HRESULT WINAPI FakeCreate2(IUnknown*, D3D_FEATURE_LEVEL, REFIID, void** pp)
+{
+    *pp = &g_dev2;
+    return S_OK;
+}
+inline void Dummy() {}
+
 inline void Run()
 {
     using namespace opf;
@@ -341,6 +361,54 @@ inline void Run()
           "psorec: measure-only counts the creation and writes no file");
     PsoRecordTestReset();
     DeleteFileW(path.c_str());
+
+    // the game's creation path: D3D12CreateDevice (fake) returns two devices with DIFFERENT vtables; each is hooked with its own originals
+    InitDev();
+    g_dev2.vt = g_dev2Vt;
+    memcpy(g_dev2Vt, g_devVt, sizeof g_devVt);
+    g_dev2Vt[10] = reinterpret_cast<void*>(&Dev2Gfx);
+    g_dev2Gfx = 0;
+    PsoRecordTick(2, 64, 0, 1, L".");   // sets the mode only
+    void *d1 = nullptr, *d2 = nullptr;
+    Check(PsoRecordTestCreateDevice(reinterpret_cast<void*>(&FakeCreate1), &d1) == S_OK && d1 == &g_dev &&
+              g_devVt[10] != reinterpret_cast<void*>(&DevGfx) && PsoRecordTestCandidate() == &g_dev && PsoRecordTestGameDevice() == nullptr,
+          "psorec: the device D3D12CreateDevice returned is hooked at once (found from the game's own creation path) and held as candidate");
+    PsoRecordTestSetPlay(1);
+    void* rs1 = nullptr;
+    reinterpret_cast<RsFn>(g_devVt[16])(&g_dev, 0, rsA.data(), rsA.size(), __uuidof(ID3D12RootSignature), &rs1);
+    Check(PsoRecordTestGameDevice() == &g_dev, "psorec: the first hooked call confirms the game's device");
+    Check(PsoRecordTestCreateDevice(reinterpret_cast<void*>(&FakeCreate2), &d2) == S_OK && d2 == &g_dev2 && g_dev2Vt[10] != reinterpret_cast<void*>(&Dev2Gfx) &&
+              PsoRecordTestCandidate() == &g_dev,
+          "psorec: a second device with its own vtable is hooked too; the first stays the candidate");
+    reinterpret_cast<GfxFn>(g_dev2Vt[10])(&g_dev2, &g, __uuidof(ID3D12PipelineState), &o);
+    reinterpret_cast<GfxFn>(g_devVt[10])(&g_dev, &g, __uuidof(ID3D12PipelineState), &o);
+    c = PsoRecordTestCounts();
+    Check(g_dev2Gfx == 1 && g_seen.size() == 2 && c.calls == 2, "psorec: each hook calls the original of its own device's vtable and is counted");
+    PsoRecordTestReset();
+    Check(g_devVt[10] == reinterpret_cast<void*>(&DevGfx) && g_dev2Vt[10] == reinterpret_cast<void*>(&Dev2Gfx), "psorec: both vtables restored");
+
+    // the export redirect on a real mapped module (a table entry pointed at a stub and put back)
+    {
+        const struct { const wchar_t* dll; const char* fn; } cands[] = {{L"user32.dll", "IsWindow"}, {L"advapi32.dll", "GetUserNameW"}, {L"user32.dll", "GetDC"}, {L"gdi32.dll", "SelectObject"}};
+        bool done = false;
+        for (auto& cand : cands) {
+            HMODULE m = LoadLibraryW(cand.dll);
+            if (!m) continue;
+            FARPROC before = GetProcAddress(m, cand.fn);
+            void* slot = nullptr;
+            uint32_t rva = 0;
+            void* stub = PsoRecordTestPatchExport(m, cand.fn, reinterpret_cast<void*>(&Dummy), &slot, &rva);
+            if (!stub) continue;
+            const bool patched = reinterpret_cast<void*>(GetProcAddress(m, cand.fn)) == stub && stub != reinterpret_cast<void*>(before);
+            const uint8_t* sb = static_cast<const uint8_t*>(stub);
+            const bool jmp = sb[0] == 0xFF && sb[1] == 0x25 && *reinterpret_cast<void* const*>(sb + 6) == reinterpret_cast<void*>(&Dummy);
+            PsoRecordTestRestoreExport(slot, rva);
+            Check(patched && jmp && GetProcAddress(m, cand.fn) == before, "psorec: an export table entry redirected to a jump stub and put back (GetProcAddress sees both)");
+            done = true;
+            break;
+        }
+        if (!done) Check(false, "psorec: an export table entry redirected to a jump stub and put back (no suitable module export found)");
+    }
 }
 
 }  // namespace psr
