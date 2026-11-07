@@ -5,6 +5,29 @@ Investigations: [investigations.md](investigations.md).
 
 ## 2026-11-07
 
+### OsPageCache, real gameplay trace (`dll3-gate-doors`, 326 s with 2 transitions): already near its ceiling. Closed
+- Live hit rate 64.1%. The ceiling for exact-size reuse (unbounded, never trimmed) is 71.0%.
+- Grid search, optimising for ms saved with the measured Wine miss costs:
+
+| Policy | Hit rate | ms saved over 326 s |
+|---|---|---|
+| current: 64 MB, 5 s | 64.1% | 4843 |
+| 192 MB, 60 s | 68.2% | 5285 |
+| 512 MB, LRU | 70.0% | about 5440 |
+
+- The best realistic setting saves about 0.44 s more over 5.4 min, roughly 1.4 ms/s, at 3× the memory.
+- The earlier 13–30% hit rates were start-up only: the start-up ceiling is 15.7%, the `dll2` diag-run ceiling 40%.
+- Decision: keep the shipped defaults. Investigation 20 closed. The trace and simulator tools stay for later.
+
+### Shader gate did not hold a Continue load either; the runner misread the load (`dll3-gate-doors`)
+- The save loaded about 10 s after Continue (fade-in at 12:02:32), yet the gate logged "never needed, play has begun;
+  0 ticks skipped". The precompile then finished IN PLAY at +71 s.
+- The `[pso]` "in play" switch at +27.1 s came about 5 s before the fade-in, so the gate probably saw play as started
+  too early. The save load was also not counted as a transition ("0 save loads").
+- The runner's `--start continue` reported "the save did not load" after 5 min.
+- Being fixed on branch `gate-fix`.
+
+
 ### Crash fixed: clang-cl `/EHsc` dropped `__try` handlers (branch `crashfix`, DLL `c1b57556`)
 - The crash was at `VERSION+0x19fcd` = `ExecHook` in `diagnostics/tick_split.cpp:347`: `ProbeKind` read a stale
   `tf+0x28` target.
