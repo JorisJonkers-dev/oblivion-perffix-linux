@@ -272,6 +272,11 @@ struct Config {
     bool hdrSaveThumbnail = false;     // HdrSaveThumbnail (TRADE-OFF, off by default): a save's thumbnail made in
                                        // HDR10 converted the same way (start-up install, live)
     int hdrGamma22White = 95;         // not in the shipped ini: HdrGamma22's reference white = this / 10 x the Mid-Tone (live)
+    bool otProfile = false;            // Diagnostic OtProfile: the old engine's thread (OT) per-cycle busy/idle and stage times to
+                                       // OblivionPerfFix-otprofile.csv (installed only if on at start-up, then live)
+    int otProfileMs = 10;              // ... a cycle counts as slow from this busy time (ms)
+    int otProfileSampleHz = 1000;      // ... the stage-marker sampler's rate (0 = no sampler)
+    bool otCrashContext = false;       // Diagnostic OtCrashContext: a fault on the OT is described in the log (start-up install, live)
     bool hitchLedgerTickSplit = false; // HitchLedgerTickSplit (diagnostic, public since 1.2.3): diagnostics/tick_split.cpp, the
                                        // game thread's tick time by kind, class and group to OblivionPerfFix-ticksplit.csv
                                        // (needs HitchLedger=1; installed only if on at start-up, then live)
@@ -1115,6 +1120,31 @@ uint64_t RigTraceTestReused();                                    // self-test o
 void RigTraceTestSetMode(int mode);                               // self-test only: 0 off, 1 reuse, 2 verify
 uint64_t RigTraceTestVerified(uint64_t* diff);                    // self-test only: verified repeats (and how many differed)
 uint64_t NpcPacingFrame();  // npc_pacing.cpp: its frame counter (counts while NpcCreationPacing's frame hook runs)
+// ot_profile.cpp (diagnostic OtProfile / OtCrashContext): read-only profiler and crash breadcrumb of the old engine's thread.
+struct OtProfileInfoOut {
+    bool installed, ctxInstalled, gtTimed;
+    int stages;
+    uint8_t* bodyCall;
+    uint8_t* endRun;   // the rewritten RunSession(-2) call (12 bytes)
+    uint8_t* gtRun;    // the rewritten RunSession(-1) call (11 bytes), nullptr if not timed
+    uint8_t* call[16];    // per stage: the redirected call (nullptr = not timed)
+    uint8_t* target[16];  // ... and the function it called
+    void* hook[16];
+    uint32_t* marker;
+    uint8_t* region;
+    void* runHookOt;
+    void* runHookGt;
+    void* ctxHandler;
+    uint32_t ctxLogged;
+    size_t recordSize;
+};
+bool InstallOtProfile(bool beforeGameCode, const wchar_t* dir, bool profile, bool crashContext, bool pacingHooked, bool gridSafe);
+void SetOtProfile(bool on, int thresholdMs, int sampleHz, bool crashContext);  // monitor thread, live
+void OtProfileDrain();                                                          // monitor thread, once a second
+bool OtProfileInfo(OtProfileInfoOut* out);
+void OtProfileTestSetup(uint64_t (*clock)(), int64_t freq, const wchar_t* path, void* const* fakeTargets, uint32_t sampleHz);  // self-test only
+void OtProfileTestMarker(uint32_t m);  // self-test only
+void OtProfileTestClose();             // self-test only
 // tick_split.cpp (diagnostic TickSplit, [Fixes] HitchLedgerTickSplit, public since 1.2.3, needs HitchLedger=1): the game
 // thread's tick time by tick-function kind, ticked class and tick group into OblivionPerfFix-ticksplit.csv.
 struct TickSplitFrame {        // from LedgerFrameEnd, every frame

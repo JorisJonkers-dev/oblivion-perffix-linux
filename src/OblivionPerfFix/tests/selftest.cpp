@@ -569,6 +569,7 @@ static uint64_t HashWords(uint64_t seed, const void* data, size_t bytes)
 #include "selftest_clothreg.h"    // ClothRegisterLite: sites, lite builds and their completion with fakes
 #include "selftest_clothdefer.h"     // ClothBuildDefer: sites, hooks and the defer rule (after ClothRegisterLite)
 #include "selftest_animpar.h"      // AnimTeardownParallel's shapes and the helper queue with fakes
+#include "selftest_otprofile.h"      // diagnostic OtProfile / OtCrashContext: sites, cycle bookkeeping with fakes, crash context, cost
 #include "selftest_cellbuf.h"      // CellBufferPacedEvict's shapes, the clamp stub and the buffer LRU with and without the fix
 #include "selftest_vramcounter.h"  // VramCounterFix: the Show VRAM counter
 #include "selftest_shaderscreen.h"  // ShaderScreenAfterDriverChange
@@ -2595,6 +2596,8 @@ int wmain(int argc, wchar_t** argv)
     vramc::Run(game);
     // ShaderScreenAfterDriverChange (selftest_shaderscreen.h).
     shs::Run(game);
+    // Diagnostic OtProfile / OtCrashContext (selftest_otprofile.h): after every fix that reads the OT frame's call sites.
+    otp::Run(game);
 
     // RestoreFsrAfterAltTab: FSR back on when a menu that was up at focus gain closes (the game's own focus-gained branch, run again).
     {

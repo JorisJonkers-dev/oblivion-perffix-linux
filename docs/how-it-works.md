@@ -2266,6 +2266,25 @@ install (with OBSE64 it stays off); `tools/tick_split.py` is in the GitHub repos
 us confirm where the horse corral's time went (stack samples named the cause) for `PhysAnimNoEmptyLock` and
 `RigTraceReuse`.
 
+**The old engine's thread** (`OtProfile`, `OtCrashContext`, off by default). The game's original 2006 engine runs on its
+own thread, one frame at a time, and the modern engine's main thread waits for it at the start of its frame (and it waits for
+the main thread at the end of its own): a slow old-engine frame shows up as the main thread's "pair" time in the ledger. With
+`OtProfile=1` at start-up the DLL measures that thread without changing anything it does. For every old-engine frame it records
+how long the thread was busy and how long it sat idle waiting for the main thread, how long the main thread waited for it
+(not while `NpcCreationPacing` is on: that fix uses the same call, and the ledger's pair column has the number then), and where
+the busy time went: the passes over all characters (the main update and its four levels, the passes before and after it), the
+cell-grid change (not while `CellBufferPacedEvict` is on, for the same reason), the arrival/door handler, the water update and
+the save entry. It does this by sending those calls through small timing stubs (a clock read before and after, the game's own
+function in between) and by reading the engine's own "which stage am I in" number a thousand times a second, which names the
+stage of a slow frame that the stubs do not cover. Slow frames (busy time at or over `OtProfileMs`, 10 ms) and 2-second totals
+go to `OblivionPerfFix-otprofile.csv` next to the log, in the same clock as the ledger so a tool can line them up; `python
+tools/ot_profile.py <csv>` ranks the stages and shows busy against waiting. About a microsecond per frame in the self-test.
+`OtCrashContext=1` installs a handler that is only interested in faults (access violation, illegal instruction, stack
+overflow, ...) on that thread: it writes the stage number, the stage in progress, the last completed stages, the recent stage
+numbers and the call stack as `exe+offset` to the log, then lets the exception go on to the game's own handling as if it had
+not been there (the first line says that the fault may be one the game handles itself). Start-up only (`version.dll` install),
+then the ini switches recording and the handler live; with both at 0 nothing is installed.
+
 ## All together (Cheydinhal, 720p, FSR Performance, frame generation off)
 
 This early-build table shows the result of removing the rendering bottlenecks: the game's own logic thread

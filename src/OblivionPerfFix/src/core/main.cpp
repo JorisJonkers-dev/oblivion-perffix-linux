@@ -196,6 +196,8 @@ DWORD WINAPI MonitorThread(LPVOID)
         SetStreamBehindLoading(cfg.streamBehindLoading);     // StreamBehindLoadingScreen: no-op unless installed at start-up
         SetUnfreezeBehindLoading(cfg.unfreezeBehindLoading); // prototype UnfreezeBehindLoadingScreen (trade-off; 0 = off)
         SetUnfreezeBehindLoadingFastTravel(cfg.unfreezeBehindLoadingFastTravel);  // ... its own hold after a fast travel (0 = the same)
+        SetOtProfile(cfg.otProfile, cfg.otProfileMs, cfg.otProfileSampleHz, cfg.otCrashContext);  // no-op unless installed at start-up
+        OtProfileDrain();                                    // ... its slow cycles into OblivionPerfFix-otprofile.csv
         HitchLedgerDrain();                                  // ... its slow-frame records into OblivionPerfFix-ledger.csv
         if (g_clothRegHooked) SetClothRegisterLite(cfg.clothRegisterLite);  // ClothRegisterLite: live once installed
         SetClothBuildDefer(cfg.clothBuildDefer, cfg.clothDeferQuietFrames);  // ClothBuildDefer: live once installed (no-op otherwise)
@@ -773,6 +775,12 @@ void Init(const char* loadedVia, bool proxyOk, bool beforeGameCode)
     // ChaosMaxPayloadSize: p.MaxPayloadSize before the engine reads its settings and before any physics scene (start-up,
     // both routes; only over the game's 100000; an Engine.ini value applied later wins).
     SetChaosMaxPayloadSize(cfg.chaosMaxPayloadSize, beforeGameCode);
+    // Diagnostic OtProfile / OtCrashContext: call sites of the old engine's thread redirected to timing stubs, only if on at
+    // startup; last, so every fix that reads those call sites has seen the game's own bytes. Then live.
+    if (cfg.otProfile || cfg.otCrashContext) {
+        if (InstallOtProfile(beforeGameCode, dir.c_str(), cfg.otProfile, cfg.otCrashContext, g_pacingHooked, cfg.cellBufferPacedEvict == 0))
+            SetOtProfile(cfg.otProfile, cfg.otProfileMs, cfg.otProfileSampleHz, cfg.otCrashContext);
+    }
 
     {
         // Start-up cost: the whole Init and its pattern searches (OBSE route: the game's main thread waits for it).
