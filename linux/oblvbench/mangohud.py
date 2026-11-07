@@ -198,5 +198,8 @@ def config_text(output_folder, show_hud=False):
         "fps_limit=0",
     ]
     if not show_hud:
-        lines += ["fps_only", "font_size=12", "background_alpha=0"]
+        # for the person watching: fps, a frame-time graph with min/max, CPU/GPU load (MangoHud shows a red dot
+        # while it logs; there is no option to hide it)
+        lines += ["fps", "frametime", "frame_timing=1", "cpu_stats", "gpu_stats", "position=top-left",
+                  "font_size=18", "background_alpha=0.4"]
     return "\n".join(lines) + "\n"
