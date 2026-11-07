@@ -186,7 +186,10 @@ def stats(log, start, t0, t1):
 
 
 def config_text(output_folder, show_hud=False):
-    """A MangoHud config for benchmark runs: log every frame from 1 s after start, HUD hidden unless asked."""
+    """A MangoHud config for benchmark runs: log every frame from 1 s after start.
+
+    MangoHud does not log with `no_display` (seen live on 0.8.x: no CSV at all), so the HUD stays on,
+    cut down to a small fps counter unless the full HUD is asked for."""
     lines = [
         f"output_folder={output_folder}",
         "autostart_log=1",
@@ -195,5 +198,5 @@ def config_text(output_folder, show_hud=False):
         "fps_limit=0",
     ]
     if not show_hud:
-        lines.append("no_display")
+        lines += ["fps_only", "font_size=12", "background_alpha=0"]
     return "\n".join(lines) + "\n"

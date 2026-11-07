@@ -125,8 +125,9 @@ class StatsTest(unittest.TestCase):
         self.assertIn("output_folder=/tmp/x", c)
         self.assertIn("log_interval=0", c)
         self.assertIn("autostart_log=1", c)
-        self.assertIn("no_display", c)
-        self.assertNotIn("no_display", mangohud.config_text("/tmp/x", show_hud=True))
+        self.assertNotIn("no_display", c)
+        self.assertIn("fps_only", c)
+        self.assertNotIn("fps_only", mangohud.config_text("/tmp/x", show_hud=True))
 
 
 if __name__ == "__main__":

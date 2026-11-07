@@ -84,7 +84,7 @@ config used; `ab`/`report` write `linux/results/<time>-<label>/report.md` + `rep
 
 ## How the numbers are computed
 
-MangoHud logs every presented frame (`log_interval=0`, `autostart_log=1`, overlay hidden with `no_display`):
+MangoHud logs every presented frame (`log_interval=0`, `autostart_log=1`, overlay cut down to a small fps counter; `no_display` stops MangoHud from logging):
 `frametime` (ms) and `elapsed` (ns since logging began), plus `cpu_load` and `gpu_load`.
 
 **Aligning the log with the scene windows.** The runner records each window with `time.time()`. A frame's wall time
