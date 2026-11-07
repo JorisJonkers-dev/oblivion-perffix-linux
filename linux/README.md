@@ -132,6 +132,33 @@ report from the re-analysed series without touching the run folders.
 Absolute sharpness depends on the scene; only compare the same leg between sides. Don't move or cover the game window
 while it runs, and use the same window size on both sides.
 
+## Random spots (no saves, many places)
+
+`--random N --seed S` replaces the scenario's scenes by N static scenes at places drawn from **every** place in
+`bench/scenarios/*.json` (`oblvbench/randspots.py`). Always a fresh `coc` start; nothing of your saves is loaded.
+The same seed and filters give the same spots in the same order. `--scenario` (default `cheydinhal`) still supplies
+settle/measure, the profile and the recorded cvars.
+
+```sh
+python3 linux/bench.py list --random 8 --seed 1                 # show the draw, no game
+python3 linux/bench.py run --random 8 --seed 1 --fix on --label r1
+python3 linux/bench.py run --random 12 --seed 7 --random-tags outdoor,city --random-worlds Tamriel --random-hours any
+python3 linux/bench.py ab --random 8 --seed 1 --a stock --b on --rounds 2 --label rnd   # both sides: identical spots
+python3 linux/bench.py spin --random-spot 3 --random-worlds Tamriel --variant nopar:ini:RdgParallelTranslate=0
+```
+
+- Pool: named places with a position and heading, from static/door/walk scenes (fly path points are not places),
+  deduplicated within 500 units in the same world/cell (tags of merged places are united). Excluded: places with
+  `"unsafe": true`, `"random": false` or `"hover": true`, or a scene tag `unsafe`/`underwater`/`underground`. Tags:
+  the tags of the scenes that use the place plus `exterior`/`interior` and the world group.
+- `--random-tags a,b`: places with any of those tags. `--random-worlds`: `Tamriel` (Tamriel and the city worldspaces),
+  `Interior`, `ShiveringIsles`, `Oblivion`, or an exact world/cell name.
+- `--random-hours day|any`: seeded whole hour 7-17 (default) or 0-23. `--random-weather`: `Clear` (default), a name or
+  comma list, or `any` (weathers of the place's scenario that fit its world: SE* only in the Shivering Isles).
+- The run folder gets `scenario.json` (the drawn scenes; loads like any scenario, so the run is reproducible with
+  `scenario_dir`) and `spots.md`; scene ids are `rNN-<scenario>-<place>`, so the report names the spots. `ab` writes
+  the same files next to its comparison report and uses one draw for every round and both sides.
+
 ## Fast iteration: one spot, live switches
 
 `bench.py spin` starts the game once, goes to one spot and turns the camera in full laps (default 30 deg/s, 12 s per
