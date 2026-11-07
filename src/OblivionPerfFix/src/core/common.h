@@ -1019,6 +1019,7 @@ void SetPsoPrecompileFastBudget(float ms, int coldQueue);  // live: render-threa
 void PsoPrecompileTestStatics(uint32_t* batchSize, float* batchTime, int64_t* active);  // self-test: fakes for the statics
 // pso_replay.cpp (PsoRecordReplay)
 void PsoRecordTick(int mode, int maxMB, int minMs, int threads, const wchar_t* dir);  // monitor thread, once a second
+bool PsoRecordInstallEarly(int mode);  // start-up: d3d12.dll's D3D12CreateDevice export redirected when mapped, so the game's own device is hooked
 bool PsoReplayBusy();    // the replay is creating pipelines (ShaderGateBeforePlay waits for it)
 bool PsoPlayStarted();   // pso_precompile.cpp: play has been seen (needs PsoPrecompileFast installed)
 struct PsoRecordCounts {
@@ -1031,6 +1032,11 @@ void PsoRecordTestFlush();
 bool PsoRecordTestWait(uint32_t ms);
 void PsoRecordTestReset();
 PsoRecordCounts PsoRecordTestCounts();
+long PsoRecordTestCreateDevice(void* fakeReal, void** out);
+void* PsoRecordTestGameDevice();
+void* PsoRecordTestCandidate();
+void* PsoRecordTestPatchExport(HMODULE m, const char* name, void* target, void** restoreSlot, uint32_t* restoreRva);
+void PsoRecordTestRestoreExport(void* slot, uint32_t rva);
 void SetShaderGate(bool on, uint32_t maxSeconds);  // live: ShaderGateBeforePlay effective (needs the gate slot hook), the cap in seconds
 bool ShaderGateOn();
 bool ShaderGateHooked();                      // stream_behind_loading.cpp: the fade gate's tick goes through ShaderGateHoldsTick
