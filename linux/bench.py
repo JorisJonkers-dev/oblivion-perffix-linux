@@ -154,6 +154,10 @@ def add_run_args(p):
     p.add_argument("--no-fixed-seed", action="store_true", help="launch without -FixedSeed")
     p.add_argument("--stall-sec", type=float, default=30, help="watchdog: no new frame for this long = stalled")
     p.add_argument("--max-minutes", type=float, default=0, help="time limit of one run (0: from the scene estimate)")
+    p.add_argument("--fix-ini", action="append", metavar="KEY=VAL[,KEY=VAL]",
+                   help="set [Fixes] keys in OblivionPerfFix.ini for this run only (restored afterwards)")
+    p.add_argument("--diag", action="store_true",
+                   help="engine diagnostics: HitchLedger + HitchLedgerTickSplit, copied and ranked into the run folder")
     p.add_argument("--launch-timeout", type=float, default=240)
     p.add_argument("--steam", default="steam")
 

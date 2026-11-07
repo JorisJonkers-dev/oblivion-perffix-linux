@@ -196,6 +196,14 @@ class Runner:
             if fix_mode == "stock":
                 off = fixini.write_stock_ini(p.fix_ini, guard)
                 self.say(f"stock: {len(off)} switches at 0 in OblivionPerfFix.ini (kept: {', '.join(fixini.STOCK_KEEP)})")
+            overrides = fixini.parse_overrides(getattr(o, "fix_ini", None))
+            if getattr(o, "diag", False):
+                overrides = {**fixini.DIAG_KEYS, **overrides}
+            if overrides and fix_mode != "off" and p.fix_ini.exists():
+                fixini.override_ini(p.fix_ini, guard, overrides)
+                self.result["fixIniOverrides"] = overrides
+                self.say(f"OblivionPerfFix.ini for this run: {', '.join(f'{k}={v}' for k, v in overrides.items())}")
+            diag_since = time.time()
             self.set_window_config(guard)
 
             self.bridge.reset_files()
@@ -247,6 +255,8 @@ class Runner:
             self.cleanup(guard, saves, inst, installed_here)
             watcher.stop()
         self.analyse(mh_dir, watcher)
+        if getattr(o, "diag", False) and fix_mode != "off":
+            self.collect_diag(run_dir, p.win64, diag_since if "diag_since" in locals() else 0)
         measured = sum(1 for s in self.result.get("scenes", []) if s.get("frames"))
         failed = any(w.startswith("scene ") and " failed" in w for w in self.warnings)
         self.result["outcome"] = "failed" if not measured else ("ok" if outcome == "ok" and not failed else "partial")
@@ -980,6 +990,30 @@ class Runner:
             else:
                 step("ue4ss", inst.remove)
         step("env file", lambda: envfile.clear_env(self.paths.env_file))
+
+    def collect_diag(self, run_dir, win64, since):
+        """Copies the fix's diagnostic files written during this run and ranks them with upstream's tools."""
+        import shutil
+        import subprocess
+        import sys
+        out = run_dir / "diag"
+        out.mkdir(exist_ok=True)
+        tools = Path(__file__).resolve().parents[2] / "tools"
+        copied = []
+        for name in fixini.DIAG_FILES:
+            src = win64 / name
+            if src.exists() and src.stat().st_mtime >= since:
+                shutil.copy2(src, out / name)
+                copied.append(name)
+        self.result["diagFiles"] = copied
+        jobs = [("OblivionPerfFix-ledger.csv", "stutter_ledger.py", ["--ignore-focus"]),
+                ("OblivionPerfFix-ticksplit.csv", "tick_split.py", [])]
+        for csv_name, tool, extra in jobs:
+            if csv_name in copied and (tools / tool).exists():
+                r = subprocess.run([sys.executable, "-I", str(tools / tool), str(out / csv_name), *extra],
+                                   capture_output=True, text=True, timeout=300)
+                (out / (Path(tool).stem + ".txt")).write_text(r.stdout + (("\n" + r.stderr) if r.returncode else ""))
+        self.say(f"diagnostics: {', '.join(copied) or 'none written'} -> {out}")
 
     def analyse(self, mh_dir, watcher):
         """Slices the MangoHud log for each measured window."""

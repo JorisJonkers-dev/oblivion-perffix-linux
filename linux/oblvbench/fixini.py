@@ -135,6 +135,34 @@ class FileGuard:
         return bool(self._load())
 
 
+def override_ini(ini_path, guard, values):
+    """Backs the ini up (once per run), then sets these [Fixes] keys, keeping BOM, comments and line endings."""
+    ini_path = Path(ini_path)
+    raw = ini_path.read_bytes()
+    bom = raw.startswith(b"\xef\xbb\xbf")
+    text = raw.decode("utf-8-sig" if bom else "utf-8", errors="surrogateescape")
+    guard.backup(ini_path)
+    data = set_values(text, "Fixes", {k: str(v) for k, v in values.items()}).encode("utf-8", errors="surrogateescape")
+    ini_path.write_bytes((b"\xef\xbb\xbf" if bom else b"") + data)
+
+
+def parse_overrides(items):
+    """['A=1', 'B=0,C=2'] -> {'A': '1', 'B': '0', 'C': '2'}"""
+    out = {}
+    for item in items or []:
+        for kv in item.split(","):
+            if kv.strip():
+                k, _, v = kv.partition("=")
+                if not k.strip() or not v.strip():
+                    raise ValueError(f"expected KEY=VALUE, got {kv!r}")
+                out[k.strip()] = v.strip()
+    return out
+
+
+DIAG_KEYS = {"HitchLedger": "1", "HitchLedgerTickSplit": "1"}
+DIAG_FILES = ("OblivionPerfFix-ledger.csv", "OblivionPerfFix-ticksplit.csv", "OblivionPerfFix.log")
+
+
 def write_stock_ini(ini_path, guard):
     """Backs the player's ini up, then writes the stock version in its place. Returns the keys set to 0."""
     ini_path = Path(ini_path)

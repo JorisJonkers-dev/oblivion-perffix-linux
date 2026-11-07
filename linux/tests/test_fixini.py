@@ -75,6 +75,24 @@ class GuardTest(unittest.TestCase):
         self.assertFalse(self.guard.has_pending())
         self.assertEqual(self.guard.restore(), [])
 
+    def test_override_then_restore(self):
+        original = self.ini.read_bytes()
+        fixini.override_ini(self.ini, self.guard, {"BoneUploadStores": "0", "HitchLedger": "1"})
+        vals = fixini.fix_values(self.ini.read_bytes().decode())
+        self.assertEqual(vals["BoneUploadStores"], "0")
+        self.assertEqual(vals["HitchLedger"], "1")          # missing key added under [Fixes]
+        self.assertEqual(vals["RdgParallelTranslate"], "2")
+        self.assertIn(b"\r\n", self.ini.read_bytes())     # line endings kept
+        self.assertIn(b"LogFile=1", self.ini.read_bytes())   # [General] untouched
+        self.guard.restore()
+        self.assertEqual(self.ini.read_bytes(), original)
+
+    def test_parse_overrides(self):
+        self.assertEqual(fixini.parse_overrides(["A=1", "B=0, C=2"]), {"A": "1", "B": "0", "C": "2"})
+        self.assertEqual(fixini.parse_overrides(None), {})
+        with self.assertRaises(ValueError):
+            fixini.parse_overrides(["A"])
+
     def test_restore_after_crash_new_guard_object(self):
         original = self.ini.read_bytes()
         fixini.write_stock_ini(self.ini, self.guard)
