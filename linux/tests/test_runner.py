@@ -171,9 +171,17 @@ class RunnerTest(unittest.TestCase):
         self.env.stop()
         shutil.rmtree(self.tmp)
 
+    def make_game(self, run_dir):
+        return FakeGame(self.paths, run_dir / "mangohud")
+
+    def make_run(self, run_dir, out, fix):
+        opts = runner.Options(scenario="mini", scenario_dir=self.tmp / "scen", fix=fix, label="t", warmup=0,
+                              steam="true", run_dir=run_dir, profile="small", launch_timeout=20)
+        return runner.Runner(self.paths, opts, say=out.append).run()
+
     def run_fake(self, fix):
         run_dir = self.tmp / "results/run1"
-        fake = FakeGame(self.paths, run_dir / "mangohud")
+        fake = self.make_game(run_dir)
         pid = 4242
         patches = [
             mock.patch.object(game, "launch_via_steam", fake.launch),
@@ -186,10 +194,8 @@ class RunnerTest(unittest.TestCase):
         for p in patches:
             p.start()
         try:
-            opts = runner.Options(scenario="mini", scenario_dir=self.tmp / "scen", fix=fix, label="t", warmup=0,
-                                  steam="true", run_dir=run_dir, profile="small", launch_timeout=20)
             out = []
-            result = runner.Runner(self.paths, opts, say=out.append).run()
+            result = self.make_run(run_dir, out, fix)
         finally:
             for p in patches:
                 p.stop()
