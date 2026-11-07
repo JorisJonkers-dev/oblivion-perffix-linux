@@ -5,6 +5,37 @@ Investigations: [investigations.md](investigations.md).
 
 ## 2026-11-07
 
+### OsPageCache offline tuning kit (branch `oscache-sim`)
+**Tools:**
+- Trace recorder: `OsPageCacheTrace=1`, writes `OblivionPerfFix-oscache-trace.bin`.
+- Replay simulator: `tools/oscache_sim.py`, with grid search, a Pareto front and `--obj ms`.
+- Wine miss-cost benchmark: `linux/oscache-bench.sh`.
+
+**Cost of a miss under Wine 11.21 on this PC:** `VirtualAlloc` itself costs 3.5–4.5 µs. The real cost is the first touch
+of each page, about 1.8 µs per page.
+
+| Block | Miss cost |
+|---|---|
+| 64 KB | 28.5 µs |
+| 1 MB | 346 µs |
+| 16 MB | 1.35 ms |
+
+With 4 threads contending, a miss costs about 3.5× more. That fits Wine's single lock on its virtual-memory code.
+
+**Synthetic trace** (fitted to the logged totals; the policy numbers below are therefore indicative):
+
+| Policy | Hit rate |
+|---|---|
+| Current | 31.8% |
+| 256 MB, 15 s | 43.5% |
+| 256 MB, 15 s, LRU | 51% |
+| Unbounded ceiling | 88% |
+
+**First live A/B:** `OsPageCacheMB=256`, `OsPageCacheKeepMs=15000`, with `OsPageCacheTrace=1` recording in the same run.
+Exact-size reuse only. Policies that hand out larger blocks wait until it is known that the game's allocator tolerates
+a bigger block than it asked for.
+
+
 ### Canal spin of the render and cache switches (`spin-canal-render`, 4 slots each): `RdgSubmitBatch` stays on
 | Variant | avg fps | 1% low | 0.1% low | Worst frame | Hitches | GPU |
 |---|---|---|---|---|---|---|
