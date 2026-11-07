@@ -4,6 +4,7 @@ Steps as upstream: start the game, skip to the main menu, enter a fresh world (`
 save, apply the profile, spectator mode, then per scene: teleport, pin weather/hour/timescale, settle, measure
 (static, door legs, walk, flight); quit. Frame times come from MangoHud's per-frame CSV instead of PresentMon, sliced
 by the wall-clock windows recorded here."""
+import contextlib
 import json
 import math
 import re
@@ -58,6 +59,9 @@ class Options:
         self.launch_timeout = float(kw.get("launch_timeout", 240))
         self.steam = kw.get("steam") or "steam"
         self.run_dir = kw.get("run_dir")
+        self.fix_ini = kw.get("fix_ini")                 # ["KEY=VAL,KEY=VAL", ...] for [Fixes], this run only
+        self.env = kw.get("env")                         # ["KEY=VAL", ...] added to the launch environment
+        self.diag = bool(kw.get("diag"))                 # HitchLedger + HitchLedgerTickSplit, copied into the run
         self.scenario_dir = kw.get("scenario_dir") or scenario.SCENARIO_DIR
 
 
@@ -131,9 +135,6 @@ class Runner:
         o, p = self.o, self.paths
         scn = scenario.load_scenario(o.scenario, o.scenario_dir)
         self.scn = scn
-        scenes = [s for s in scenario.select_scenes(scn, o.scenes, o.tags) if s.get("perf", True)]
-        if not scenes:
-            raise RuntimeError(f"no scenes selected in scenario '{o.scenario}'")
         self.start_mode = o.start or scn.get("start", "fresh")
         if self.start_mode not in ("fresh", "continue"):
             raise RuntimeError(f"start {self.start_mode!r}: only fresh and continue are supported on Linux")
@@ -143,6 +144,7 @@ class Runner:
             raise RuntimeError(f"unknown profile '{self.profile_name}' ({', '.join(profiles)})")
         self.prof = profiles[self.profile_name]
         self.pin_on = o.pin and scn.get("pin", True)
+        scenes = self.plan(scn)
         if o.fix not in envfile.FIX_MODES:
             raise RuntimeError(f"--fix must be one of {', '.join(envfile.FIX_MODES)}")
         fix_mode = "on" if o.fix == "fix" else o.fix
@@ -153,7 +155,7 @@ class Runner:
         mh_dir = run_dir / "mangohud"
         mh_dir.mkdir(exist_ok=True)
 
-        estimate = sum(scenario.scene_seconds(scn, s) for s in scenes)
+        estimate = self.estimate_seconds(scn, scenes)
         limit_min = o.max_minutes or math.ceil(1.6 * estimate / 60 + 7 + 5 + o.warmup / 60)
         deadline = time.time() + 60 * limit_min
 
@@ -173,8 +175,7 @@ class Runner:
             "pinned": bool(self.pin_on), "platform": "linux-proton", "frameSource": "mangohud",
             "scenesSelected": [s["id"] for s in scenes], "timeLimitMin": limit_min,
         }
-        self.say(f"{len(scenes)} scene(s), about {estimate / 60:.0f} min of scenes, profile {self.profile_name}, "
-                 f"fix {fix_mode}, time limit {limit_min} min: {', '.join(s['id'] for s in scenes)}")
+        self.announce(scenes, estimate, fix_mode, limit_min)
 
         guard = fixini.FileGuard(p.runtime)
         saves = SaveGuard(p.saved / "SaveGames", p.runtime)
@@ -196,8 +197,8 @@ class Runner:
             if fix_mode == "stock":
                 off = fixini.write_stock_ini(p.fix_ini, guard)
                 self.say(f"stock: {len(off)} switches at 0 in OblivionPerfFix.ini (kept: {', '.join(fixini.STOCK_KEEP)})")
-            overrides = fixini.parse_overrides(getattr(o, "fix_ini", None))
-            if getattr(o, "diag", False):
+            overrides = fixini.parse_overrides(o.fix_ini)
+            if o.diag:
                 overrides = {**fixini.DIAG_KEYS, **overrides}
             if overrides and fix_mode != "off" and p.fix_ini.exists():
                 fixini.override_ini(p.fix_ini, guard, overrides)
@@ -214,7 +215,7 @@ class Runner:
             marker.unlink(missing_ok=True)
             env = envfile.build_env(fix_mode, mh_conf, ue4ss=True,
                                     game_args=("-FixedSeed",) if o.fixed_seed else (), marker=marker,
-                                    extra=envfile.parse_env_args(getattr(o, "env", None)))
+                                    extra=envfile.parse_env_args(o.env))
             envfile.write_env(p.env_file, env, ttl=o.launch_timeout + 60)
             self.result["env"] = env
             watcher.start()
@@ -229,21 +230,7 @@ class Runner:
             s = self.enter_world()
             self.result["loadSec"] = round(time.time() - self.launch_wall, 1)
             self.say(f"in the world: {s.get('level')} ({self.result['loadSec']} s after launch)")
-            self.apply_settings()
-            self.sync_marker()
-            self.warm_up(scenes)
-            for i, scene in enumerate(scenes, 1):
-                try:
-                    self.run_scene(i, len(scenes), scene)
-                except (GameDown, Deadline, NeedsUser):
-                    raise
-                except Exception as e:      # one failed scene must not cost the whole run
-                    self.warn(f"scene {scene['id']} failed: {e}")
-                    self.place = None
-                    for c in ("freeze 0", "watch 0", "walkstop", "flystop"):
-                        self.send(c, nothrow=True)
-            self.end_of_pass()
-            self.sync_marker()
+            self.drive(scenes)
             outcome = "ok"
         except (GameDown, Deadline, NeedsUser, BenchError, RuntimeError, OSError) as e:
             self.warn(f"run stopped: {type(e).__name__}: {e}")
@@ -256,19 +243,60 @@ class Runner:
             self.cleanup(guard, saves, inst, installed_here)
             watcher.stop()
         self.analyse(mh_dir, watcher)
-        if getattr(o, "diag", False) and fix_mode != "off":
+        if o.diag and fix_mode != "off":
             self.collect_diag(run_dir, p.win64, diag_since if "diag_since" in locals() else 0)
-        measured = sum(1 for s in self.result.get("scenes", []) if s.get("frames"))
-        failed = any(w.startswith("scene ") and " failed" in w for w in self.warnings)
-        self.result["outcome"] = "failed" if not measured else ("ok" if outcome == "ok" and not failed else "partial")
+        self.result["outcome"] = self.outcome_of(outcome)
         self.result["warnings"] = self.warnings
-        (run_dir / "result.json").write_text(json.dumps(self.result, indent=1))
-        from .report import run_report
-        (run_dir / "report.md").write_text(run_report(self.result))
+        self.write_outputs(run_dir)
         self.say(f"BENCH-RESULT {self.result['outcome']} {o.label} dir={run_dir} warnings={len(self.warnings)}")
         if interrupted:
             raise KeyboardInterrupt
         return self.result
+
+    # ------------------------------------------------------------ what a run does (overridden by the live session)
+
+    def plan(self, scn):
+        """The scenes to measure (raises before anything is touched when there is nothing to do)."""
+        o = self.o
+        scenes = [s for s in scenario.select_scenes(scn, o.scenes, o.tags) if s.get("perf", True)]
+        if not scenes:
+            raise RuntimeError(f"no scenes selected in scenario '{o.scenario}'")
+        return scenes
+
+    def estimate_seconds(self, scn, scenes):
+        return sum(scenario.scene_seconds(scn, s) for s in scenes)
+
+    def announce(self, scenes, estimate, fix_mode, limit_min):
+        self.say(f"{len(scenes)} scene(s), about {estimate / 60:.0f} min of scenes, profile {self.profile_name}, "
+                 f"fix {fix_mode}, time limit {limit_min} min: {', '.join(s['id'] for s in scenes)}")
+
+    def drive(self, scenes):
+        """Everything between 'in the world' and 'quit'."""
+        self.apply_settings()
+        self.sync_marker()
+        self.warm_up(scenes)
+        for i, scene in enumerate(scenes, 1):
+            try:
+                self.run_scene(i, len(scenes), scene)
+            except (GameDown, Deadline, NeedsUser):
+                raise
+            except Exception as e:      # one failed scene must not cost the whole run
+                self.warn(f"scene {scene['id']} failed: {e}")
+                self.place = None
+                for c in ("freeze 0", "watch 0", "walkstop", "flystop"):
+                    self.send(c, nothrow=True)
+        self.end_of_pass()
+        self.sync_marker()
+
+    def outcome_of(self, outcome):
+        measured = sum(1 for s in self.result.get("scenes", []) if s.get("frames"))
+        failed = any(w.startswith("scene ") and " failed" in w for w in self.warnings)
+        return "failed" if not measured else ("ok" if outcome == "ok" and not failed else "partial")
+
+    def write_outputs(self, run_dir):
+        (run_dir / "result.json").write_text(json.dumps(self.result, indent=1))
+        from .report import run_report
+        (run_dir / "report.md").write_text(run_report(self.result))
 
     # ------------------------------------------------------------ start-up
 
@@ -731,7 +759,10 @@ class Runner:
             self.warn(f"scene {scene['id']}: unknown type {t}")
         self.check_pins(scene["id"])
 
-    def scene_static(self, scene, settle):
+    @contextlib.contextmanager
+    def static_setup(self, scene):
+        """Goes to the scene's place, pins its conditions and does what a static scene needs (detection, AI hold,
+        spawned actors, aim); yields whether the AI is held; undoes the toggles on the way out."""
         self.move_to(scene["at"])
         self.set_conditions(scene)
         spawn = scene.get("spawn", [])
@@ -757,15 +788,7 @@ class Runner:
                 self.send(f"aim {aim} front", nothrow=True)
                 self.wait(1.5)
                 self.send(f"aim {aim}", nothrow=True)
-            self.wait(settle)
-            t0 = time.time()
-            self.wait(float(scene.get("measure", self.scn["defaults"].get("measure", 20))))
-            t1 = time.time()
-            end = self.bridge.state()
-            self.add_segment({"id": scene["id"], "type": "static", "t0": t0, "t1": t1, "state": end, "aiHeld": ai_held})
-            if end and (end.get("menu") == "1" or end.get("frozen") == "1"):
-                self.warn(f"{scene['id']}: a menu or conversation was open at the end of the scene "
-                          f"(menu={end.get('menu')} frozen={end.get('frozen')}): its numbers measure the paused world")
+            yield ai_held
         finally:
             if detect and not self.st["detect_off"]:
                 if self.send("obv tdetect", nothrow=True) is not None:
@@ -775,6 +798,18 @@ class Runner:
             if ai_held and self.st["ai_off"]:
                 if self.send("obv tai", nothrow=True) is not None:
                     self.st["ai_off"] = False
+
+    def scene_static(self, scene, settle):
+        with self.static_setup(scene) as ai_held:
+            self.wait(settle)
+            t0 = time.time()
+            self.wait(float(scene.get("measure", self.scn["defaults"].get("measure", 20))))
+            t1 = time.time()
+            end = self.bridge.state()
+            self.add_segment({"id": scene["id"], "type": "static", "t0": t0, "t1": t1, "state": end, "aiHeld": ai_held})
+            if end and (end.get("menu") == "1" or end.get("frozen") == "1"):
+                self.warn(f"{scene['id']}: a menu or conversation was open at the end of the scene "
+                          f"(menu={end.get('menu')} frozen={end.get('frozen')}): its numbers measure the paused world")
 
     def scene_door(self, scene, settle):
         self.move_to(scene["at"])

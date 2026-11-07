@@ -45,7 +45,8 @@ def run_options(a, **over):
     kw = dict(scenario=a.scenario, scenes=split_list(a.scenes), tags=split_list(a.tags), start=a.start,
               label=a.label, fix=a.fix, profile=a.profile, warmup=a.warmup, keep_ue4ss=a.keep_ue4ss,
               show_hud=a.show_hud, pin=not a.no_pin, fixed_seed=not a.no_fixed_seed, native_res=a.native_res,
-              stall_sec=a.stall_sec, max_minutes=a.max_minutes, launch_timeout=a.launch_timeout, steam=a.steam)
+              stall_sec=a.stall_sec, max_minutes=a.max_minutes, launch_timeout=a.launch_timeout, steam=a.steam,
+              fix_ini=a.fix_ini, env=a.env, diag=a.diag)
     kw.update(over)
     return Options(**kw)
 
