@@ -2142,6 +2142,22 @@ be built again during play. After a real driver update the cache is empty but wo
 
 <a id="vramcounterfix"></a>
 
+**On Linux (Proton).** There the graphics driver version Windows programs can see is a constant (35.0.65535.65535), so
+the note above never changes when Mesa, vkd3d-proton or Proton is updated, or when the shader caches are deleted, and
+the game builds its shaders during play. `ShaderScreenLinuxFingerprint` (1, only under Wine) adds what a Windows
+process can still read through the `Z:` drive and the environment: the Wine and Proton versions, a hash of
+vkd3d-proton's `d3d12core.dll`, the Vulkan driver files (name, size, time, the Mesa version where the path contains
+it, as on NixOS) and the sizes of the vkd3d-proton cache files and Mesa's shader cache. A different line, or a cache
+under half its recorded size, brings the shader screen back at the next start, like a driver update. An older
+card-only note is extended without a screen.
+
+**Why the screen cannot be used for every launch.** The game decides it once, at the very start, before its pipeline
+cache exists, so how much is left to build is unknown. The screen comes from what changed. For everything else there is
+`ShaderGateBeforePlay`: under Wine the first load after the main menu waits on its loading screen while the precompile
+still runs (the game's fade gate, a 0.5 s timer, is skipped; the same mechanism as `UnfreezeBehindLoadingScreen`).
+The precompile runs at the engine's fast pace meanwhile. It is released when the precompile ends, after
+`ShaderGateMaxSeconds` (600) or when the engine's queue has been empty for 45 s; it never holds a later load.
+
 ### The "Show VRAM" counter shows real numbers (`VramCounterFix`)
 
 [Evidence](research.md#vramcounterfix).

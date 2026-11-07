@@ -111,6 +111,12 @@ Config LoadConfig(const wchar_t* iniPath)
     c.menuOpenFlashFix = get(L"Fixes", L"MenuOpenFlashFix", c.menuOpenFlashFix) != 0;
     c.vramCounterFix = get(L"Fixes", L"VramCounterFix", c.vramCounterFix) != 0;
     c.shaderScreenAfterDriverChange = get(L"Fixes", L"ShaderScreenAfterDriverChange", c.shaderScreenAfterDriverChange) != 0;
+    c.shaderScreenLinux = get(L"Fixes", L"ShaderScreenLinuxFingerprint", c.shaderScreenLinux) != 0;
+    c.shaderGateBeforePlay = get(L"Fixes", L"ShaderGateBeforePlay", c.shaderGateBeforePlay);
+    if (c.shaderGateBeforePlay < 0 || c.shaderGateBeforePlay > 2) c.shaderGateBeforePlay = 1;
+    c.shaderGateMaxSeconds = get(L"Fixes", L"ShaderGateMaxSeconds", c.shaderGateMaxSeconds);
+    if (c.shaderGateMaxSeconds < 10) c.shaderGateMaxSeconds = 10;
+    if (c.shaderGateMaxSeconds > 3600) c.shaderGateMaxSeconds = 3600;
     c.physAnimNoEmptyLock = get(L"Fixes", L"PhysAnimNoEmptyLock", c.physAnimNoEmptyLock) != 0;
     c.rigTraceReuse = get(L"Fixes", L"RigTraceReuse", c.rigTraceReuse);
     if (c.rigTraceReuse < 0 || c.rigTraceReuse > 2) c.rigTraceReuse = 1;  // 0 off, 1 on, 2 verify; anything else = on

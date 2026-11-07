@@ -5133,6 +5133,17 @@ int wmain(int argc, wchar_t** argv)
               "SharedMemoryGpu=2: a 16 GB handheld yes; a 24 GB Ally X, a 32 GB APU, Wine with SharedMemoryGpuWine=0, a graphics card no");
         Check(Config().sharedMemoryGpuWine && Config().psoColdGuardWine && Config().osPageCacheKeepMs == 0,
               "defaults: SharedMemoryGpuWine=1, PsoColdGuardWine=1, OsPageCacheKeepMs=0 (the seconds key)");
+        {
+            Config c;
+            bool rule = Config().shaderGateBeforePlay == 1 && Config().shaderGateMaxSeconds == 600 && Config().shaderScreenLinux;
+            for (int v : {0, 1, 2})
+                for (bool wine : {false, true}) {
+                    c.shaderGateBeforePlay = v;
+                    rule = rule && ShaderGateWanted(c) == (v == 2 || (v == 1 && IsWine()));
+                    (void)wine;
+                }
+            Check(rule, "defaults: ShaderGateBeforePlay=1 (on under Wine/Proton only; 2 everywhere, 0 off), ShaderGateMaxSeconds=600, ShaderScreenLinuxFingerprint=1");
+        }
         const SharedGpuHost host = SharedGpuHostFacts();
         if (IsWine()) {
             printf("SKIP  SharedMemoryGpu: this PC is Windows itself (no wine_get_version): not asserted under Wine/Proton\n");

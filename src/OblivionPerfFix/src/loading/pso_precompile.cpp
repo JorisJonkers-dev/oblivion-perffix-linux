@@ -44,6 +44,15 @@
 // search is retried every 10 s and given up after three, and the log says once which it was. PsoPrecompileColdQueue=0
 // turns the whole guard off (no queue, driver-thread or 60 s limit: the pace before 1.1.10, with the budget at 16).
 //
+// ShaderGateBeforePlay (since 1.1.12; on under Wine by default): the precompile must not run on into play. The start-up screen
+// cannot do that for every launch (the game decides it once, before the pipeline cache exists: ShaderScreenAfterDriverChange
+// takes it after a driver/Mesa/vkd3d change). So the first load after the main menu waits: while the precompile still runs
+// and the main menu has been seen but play has not, the game's fade gate (the 0.5 s looping timer that ends a loading screen,
+// hooked in stream_behind_loading.cpp, the same skip UnfreezeBehindLoadingScreen uses) is skipped, so the player stays on the
+// loading screen; the precompile runs at UE's Fast values meanwhile (nobody interacts; the cold-cache guard aside). Only that
+// first load is ever held. Released when the precompile ends, after ShaderGateMaxSeconds (600), or when UE's queue has been
+// empty for 45 s with the flag still set (not progressing). Timing only: the same pipelines, the same image.
+//
 // Found by byte pattern: SetBatchMode (its entry, the singleton it checks, its three cases, each storing the batch size
 // into the same static) and IsPrecompiling (the same singleton, the flag's offset). The entry's first two instructions
 // (sub rsp,28h; cmp qword [singleton],0) move to a trampoline with the comparison re-targeted; a 5-byte jump to a stub
@@ -120,6 +129,15 @@ std::atomic<int> g_coldQueue{1000};     // PsoPrecompileColdQueue: fetched-not-d
 std::atomic<bool> g_cold{false};        // this precompile goes slowly (cold driver cache): the game's own pace until it ends
 std::atomic<bool> g_screenHold{false};  // ShaderScreenAfterDriverChange took the game's first-launch path: until the
                                         // main menu (nobody can interact behind that screen) UE's Fast values, cold or not
+std::atomic<bool> g_gateOn{false};      // ShaderGateBeforePlay (effective: on, and the gate hook installed)
+std::atomic<uint32_t> g_gateMaxSec{600};
+std::atomic<bool> g_gateHolding{false}; // the first load after the main menu is being held for the precompile
+bool g_gateDone = false;                // game thread: the hold ended (or play began): never again this session
+ULONGLONG g_gateStart = 0, g_gateLogAt = 0, g_activeAt = 0;   // game thread (ms since install; 0: none)
+uint32_t g_gateStallMs = 45000, g_gateCapMs = 0;   // g_gateCapMs: self-test override (0: ShaderGateMaxSeconds)
+                                                // UE's queue empty this long with the flag set: not progressing, release
+std::atomic<uint64_t> g_gateHeldMs{0}, g_gateTicks{0};
+std::atomic<const char*> g_gateEnd{""};
 std::atomic<bool> g_loadingNow{false};  // the game thread's last look: a loading screen (the freeze subsystem's loading mode)
 std::atomic<bool> g_appliedBounded{false};  // the faster pace was applied with the bounded budget (not UE's Fast values)
 std::atomic<float> g_appliedBudget{0.0f};   // the bounded budget last applied (0: none; a change re-applies at the next check)
@@ -234,12 +252,14 @@ int InPlayNow(ULONGLONG now)
 // map opening lag (a player report after NVIDIA 621.01, 2026-10-22).
 // The faster pace with the bounded render-thread budget (menus, start-up), or UE's Fast values (loading screens, or the key at 16).
 bool ScreenHold() { return g_screenHold.load() && !g_menuSeen; }
-bool Bounded() { return g_budgetMs.load() < 16.0f && !g_loadingNow.load() && !ScreenHold(); }
+bool Bounded() { return g_budgetMs.load() < 16.0f && !g_loadingNow.load() && !ScreenHold() && !g_gateHolding.load(); }
 
 int Wanted(int requested, int inPlay, bool precompiling)
 {
     const bool notPlaying = inPlay == 0 || (inPlay == 2 && g_inGameMenus.load(std::memory_order_relaxed));
-    if (g_enabled.load(std::memory_order_relaxed) && !g_faulted && precompiling && requested == kBackground && ScreenHold()) return kFast;
+    if (g_enabled.load(std::memory_order_relaxed) && !g_faulted && precompiling && requested == kBackground &&
+        (ScreenHold() || g_gateHolding.load(std::memory_order_relaxed)))
+        return kFast;
     if (g_enabled.load(std::memory_order_relaxed) && !g_faulted && !g_cold.load() && precompiling && requested == kBackground && notPlaying)
         return kFast;
     return requested;
@@ -325,6 +345,7 @@ void Look(ULONGLONG now)
     if (running) {
         const int64_t queued = g_active ? *g_active : 0;
         if (queued > g_maxQueue.load()) g_maxQueue = queued;
+        if (queued != 0) g_activeAt = now ? now : 1;
         const int coldQueue = g_coldQueue.load();
         if (!g_cold.load()) {
             const char* why = nullptr;
@@ -336,8 +357,9 @@ void Look(ULONGLONG now)
     }
     if (!running && g_running) {
         g_doneMs = now;
-        Event("[pso] +%.1f s: shader precompile finished (seen from +%.1f s; %.1f s at the Fast pace, %.1f s at the game's)",
-              now / 1000.0, g_firstSeenMs.load() / 1000.0, g_fastMs.load() / 1000.0, g_gameModeMs.load() / 1000.0);
+        Event("[pso] +%.1f s: shader precompile finished %s (seen from +%.1f s; %.1f s at the Fast pace, %.1f s at the game's)",
+              now / 1000.0, g_played.load() ? "IN PLAY" : "before play", g_firstSeenMs.load() / 1000.0,
+              g_fastMs.load() / 1000.0, g_gameModeMs.load() / 1000.0);
         ShaderScreenPrecompileFinished();  // ShaderScreenAfterDriverChange: no-op unless it took the first-launch path
     } else if (!running && g_menuSeen) {
         // ShaderScreenAfterDriverChange (no-op unless a record is pending): the main menu with no precompile running also
@@ -755,6 +777,86 @@ void SetPsoPrecompileScreenHold(bool on)
 
 bool PsoPrecompileScreenHold() { return g_screenHold.load(); }
 
+void SetShaderGate(bool on, uint32_t maxSeconds)
+{
+    g_gateOn = on;
+    g_gateMaxSec = maxSeconds < 10 ? 10 : maxSeconds;
+}
+
+bool ShaderGateOn() { return g_gateOn.load(); }
+
+namespace {
+void GateEnd(const char* why)
+{
+    const bool was = g_gateHolding.exchange(false);
+    g_gateDone = true;
+    g_gateEnd = why;
+    if (was) {
+        const uint64_t held = Now() - g_gateStart;
+        g_gateHeldMs = held;
+        Log("[gate] +%.1f s: the first load after the main menu is released after %.1f s (%s; %llu ticks skipped)", Now() / 1000.0,
+            held / 1000.0, why, static_cast<unsigned long long>(g_gateTicks.load()));
+    }
+}
+}  // namespace
+
+// The fade gate's tick (a looping 0.5 s timer on the game thread, called through its delegate): true = skip this tick, so the
+// loading screen stays up. Only the first load after the main menu, only while the precompile runs.
+bool ShaderGateHoldsTick()
+{
+    if (!g_gateOn.load() || !g_fn || g_gateDone) return false;
+    if (!g_enabled.load() || g_faulted || GetCurrentThreadId() != g_gameThread || !LookGuarded()) return false;
+    if (g_played.load()) {   // play is under way (a gate released earlier, or never needed): no hold from here on
+        GateEnd("play has begun");
+        return false;
+    }
+    if (!g_menuSeen) return false;   // the start-up's own transition into the main menu
+    if (!Precompiling()) {
+        if (g_gateHolding.load()) GateEnd("the precompile has finished");
+        return false;
+    }
+    const ULONGLONG now = Now();
+    if (!g_gateStart) {
+        g_gateStart = now ? now : 1;
+        g_activeAt = g_gateStart;
+        g_gateLogAt = g_gateStart;
+        g_gateHolding = true;
+        Log("[gate] +%.1f s: the first load after the main menu waits for the shader precompile (%lld pipelines queued; at most %u s)",
+            now / 1000.0, static_cast<long long>(g_active ? *g_active : 0), g_gateMaxSec.load());
+    }
+    if (now - g_gateStart > (g_gateCapMs ? g_gateCapMs : static_cast<ULONGLONG>(g_gateMaxSec.load()) * 1000)) {
+        GateEnd("cap reached: the precompile goes on in play");
+        return false;
+    }
+    if (now - g_activeAt > g_gateStallMs) {
+        GateEnd("not progressing: UE's queue empty while the flag stays set");
+        return false;
+    }
+    if (now - g_gateLogAt >= 30000) {
+        g_gateLogAt = now;
+        Log("[gate] +%.1f s: still waiting (%.0f s so far, %lld pipelines queued)", now / 1000.0, (now - g_gateStart) / 1000.0,
+            static_cast<long long>(g_active ? *g_active : 0));
+    }
+    g_gateTicks.fetch_add(1, std::memory_order_relaxed);
+    g_gateHolding = true;
+    return true;
+}
+
+void PsoPrecompileTestGate(uint32_t stallMs, uint32_t capMs)
+{
+    g_gateStallMs = stallMs;
+    g_gateCapMs = capMs;
+    g_gateDone = false;
+    g_gateStart = g_gateLogAt = g_activeAt = 0;
+    g_gateHolding = false;
+    g_gateTicks = 0;
+    g_gateHeldMs = 0;
+    g_gateEnd = "";
+}
+
+bool PsoPrecompileGateHolding() { return g_gateHolding.load(); }
+const char* PsoPrecompileGateEnd() { return g_gateEnd.load(); }
+
 void SetPsoPrecompileFastInGameMenus(bool enabled)
 {
     g_inGameMenus = enabled;   // as above: the timer's next check
@@ -855,7 +957,7 @@ void LogPsoPrecompileStats()
     if (!g_fn) return;
     const uint64_t calls = g_calls.load(), replaced = g_replaced.load(), fast = g_switchesFast.load(), back = g_handBacks.load(),
                    checks = g_timerChecks.load();
-    const uint64_t sum = calls + replaced + fast + back + checks + g_doneMs.load() + g_coldMs.load();
+    const uint64_t sum = calls + replaced + fast + back + checks + g_doneMs.load() + g_coldMs.load() + g_gateTicks.load() + g_gateHeldMs.load();
     if (sum == g_logged) return;
     g_logged = sum;
     LARGE_INTEGER f;
@@ -869,6 +971,11 @@ void LogPsoPrecompileStats()
         checks && f.QuadPart ? 1e6 * static_cast<double>(g_timerTicks.load()) / static_cast<double>(f.QuadPart) / static_cast<double>(checks) : 0.0,
         g_batchSize ? *g_batchSize : 0u, g_batchTime ? *g_batchTime : 0.0f, static_cast<long long>(g_maxQueue.load()), g_drvPeakPct.load(),
         g_cold.load() ? "; the game's pace since the cold-cache guard tripped, " : "", g_cold.load() ? g_coldWhy.load() : "");
+    if (g_gateOn.load())
+        Log("[gate] ShaderGateBeforePlay: %s%s%s; %llu loading-screen ticks skipped, held %.1f s",
+            g_gateHolding.load() ? "holding the first load" : g_gateTicks.load() ? "released" : "never needed", g_gateEnd.load()[0] ? ", " : "",
+            g_gateEnd.load(),
+            static_cast<unsigned long long>(g_gateTicks.load()), g_gateHeldMs.load() / 1000.0);
 }
 
 bool PsoPrecompileInfo(PsoPrecompileInfoOut* out)
@@ -935,6 +1042,8 @@ void PsoPrecompileTestOriginal(void* fakeSetBatchMode)
     g_coldGuardWine = true;
     g_trendRun = 0;
     g_trendLast = -1;
+    PsoPrecompileTestGate(45000);
+    g_gateOn = false;
     g_fastMaxMs = kFastMaxMs;
     g_drvRetryMs = 10000;
     ForgetDriverThreads();

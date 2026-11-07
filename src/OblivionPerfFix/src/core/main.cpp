@@ -226,6 +226,7 @@ DWORD WINAPI MonitorThread(LPVOID)
         SetPsoPrecompileFastBudget(static_cast<float>(cfg.psoPrecompileFastBudgetMs < 1 ? 1 : cfg.psoPrecompileFastBudgetMs),
                                    cfg.psoPrecompileColdQueue < 0 ? 0 : cfg.psoPrecompileColdQueue);
         SetPsoColdGuardWine(cfg.psoColdGuardWine);
+        SetShaderGate(ShaderGateWanted(cfg) && ShaderGateHooked(), static_cast<uint32_t>(cfg.shaderGateMaxSeconds));  // ShaderGateBeforePlay: live once its hook is in
         PsoPrecompileWatchDriver();  // the cold-cache guard's driver-thread reading (no-op unless installed and precompiling)
         SetAnimTeardownParallel(ParallelHelpersAllowed(cfg) ? cfg.animTeardownParallel : 0);    // AnimTeardownParallel: no-op unless installed at start-up
         SetCellBufferPacedEvict(cfg.cellBufferPacedEvict);    // CellBufferPacedEvict: no-op unless installed at start-up
@@ -619,6 +620,7 @@ void Init(const char* loadedVia, bool proxyOk, bool beforeGameCode)
         Log("[push] PhysicsPushParallel kept off: %u usable logical processors (needs %d, ParallelMinProcessors)", UsableLogicalProcessors(), cfg.parallelMinProcessors);
     else Log("[push] off in OblivionPerfFix.ini (takes a restart to switch on)");
     // ShaderScreenAfterDriverChange (game bug): installed only if on at start-up (the decision is made once, early).
+    SetShaderScreenLinux(cfg.shaderScreenLinux);
     if (cfg.shaderScreenAfterDriverChange) ApplyShaderScreenAfterDriverChange(beforeGameCode, dir.c_str());
     else Log("[shaderscreen] ShaderScreenAfterDriverChange off in OblivionPerfFix.ini (takes a restart to switch on)");
     // Diagnostic HitchLedger: installed only if on at startup (the tick-group entry detour, before BulkIndexInsert, whose lab
@@ -645,8 +647,12 @@ void Init(const char* loadedVia, bool proxyOk, bool beforeGameCode)
     // NpcCreationPacing's frame hook); afterwards the ini switches it live.
     if (cfg.streamBehindLoading) {
         if (!g_pacingHooked) Log("[streamload] NpcCreationPacing's frame hook is not installed: not installed");
-        else if (InstallStreamBehindLoading(beforeGameCode, cfg.unfreezeBehindLoading != 0 || cfg.streamPrewarmMaxHoldMs > 0)) SetStreamBehindLoading(true);
+        else if (InstallStreamBehindLoading(beforeGameCode, cfg.unfreezeBehindLoading != 0 || cfg.streamPrewarmMaxHoldMs > 0,
+                                            ShaderGateWanted(cfg) && cfg.psoPrecompileFast)) SetStreamBehindLoading(true);
     } else Log("[streamload] StreamBehindLoadingScreen off in OblivionPerfFix.ini (takes a restart to switch on)");
+    if (ShaderGateWanted(cfg) && !ShaderGateHooked())
+        Log("[gate] ShaderGateBeforePlay is on but not installed (needs PsoPrecompileFast and StreamBehindLoadingScreen, found at start-up): "
+            "the precompile may still run on into play");
     // AnimTeardownParallel: three calls redirected, only if not 0 at startup; afterwards the ini switches it live.
     if (cfg.animTeardownParallel && ParallelHelpersAllowed(cfg)) {
         if (InstallAnimTeardownParallel(beforeGameCode)) SetAnimTeardownParallel(ParallelHelpersAllowed(cfg) ? cfg.animTeardownParallel : 0);
