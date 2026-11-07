@@ -83,6 +83,9 @@ Every change keeps the project's Rules: identical image and gameplay, fail-safe 
 48. As a developer, I want to build and A/B my own DLL against the installed one in one command, so that a native change is proven or rejected within minutes.
 49. As a maintainer, I want each agent working in its own git worktree, so that parallel work never mixes branches or changes code under a running benchmark.
 50. As a Linux player watching a benchmark, I want the frame-time graph on screen, so that I can see stutter with my own eyes.
+51. As a Linux player, I want opt-in "near-invisible" quality trade-offs (shadows on tiny clutter, foliage density, small cull-distance cuts, lighting sample counts) that each come with a measured gain and a screenshot comparison, so that I can pick the frame rate I want with my eyes open.
+52. As a tuner, I want every image-changing variant compared against the base by SSIM at the same camera headings, so that "minimally worse" is a number and not a feeling.
+53. As a tuner, I want a feasibility test of content edits (cooked-asset property changes packed as a `~mods` pak), so that I know whether asset-level optimisation is worth pursuing.
 
 ## Implementation Decisions
 
@@ -179,7 +182,7 @@ Linux work lives in its own directories and branches of the fork, so upstream me
 
 ## Out of Scope
 
-- Disabling or reducing Lumen, ray tracing, or any other quality setting.
+- Disabling Lumen or ray tracing, and any quality cut with a clearly visible difference. Slight image changes are allowed (owner, 2026-11-07) when they buy a sufficient gain (at least about 5% fps, or clearly fewer hitches or better lows), pass a screenshot comparison (SSIM against the current image, plus side-by-side images), and ship as opt-in switches.
 - Frame generation and upscaler swaps (OptiScaler and others), which own `version.dll` too.
 - Gameplay changes such as a larger active cell radius, unless offered as an explicit, off-by-default trade-off.
 - Character pooling or any change to actor identity.
