@@ -5,6 +5,31 @@ Investigations: [investigations.md](investigations.md).
 
 ## 2026-11-07
 
+### Runtime PSO creation in play is large, even with warm caches (`pso-measure`, 8 random spots seed 1, `PsoRecordReplay=2`)
+| Minute of play | New PSOs | Time | Creations ≥20 ms | Max |
+|---|---|---|---|---|
+| 1 | 1391 | 11.8 s | 165 | 135 ms |
+| 2 | 1397 | 2.1 s | 10 | 48 ms |
+| 3 | 1375 | 0.6 s | 0 | 4 ms |
+| 4 | 848 | 0.8 s | 6 | 37 ms |
+| 5 | 655 | 1.4 s | 22 | 64 ms |
+
+- In total, 5666 pipeline creations and 16.7 s of creation time in about 5 min of play.
+- UE5's runtime PSO precaching compiles through vkd3d during play. This is likely the main source of late pop-in (proxies
+  are delayed until their PSOs are ready) and of small hitches.
+- The record/replay is meant to move this before play.
+
+### Record run captured nothing (`pso-record`)
+- The hook landed on "a device of our own" (in the measure run it was "the game's"), and the game's PSO creations did not
+  pass through it.
+- Being fixed: hook the game's device deterministically (via D3D12CreateDevice, or the device of a game-owned object),
+  plus a loud log line if the hook sees no game creations.
+
+### Turn-settle measurement merged (`spin --turn-settle`)
+- Separate settle times for total, lighting (low-pass), pop-in (edge regions) and luminance curve class.
+- Not run live yet.
+
+
 ### First cvar trade-off sweep at the canal (`spin-sweep-canal`, 4 slots per variant): no gains
 | Variant | avg fps | 1% low | 0.1% low | Hitches |
 |---|---|---|---|---|
