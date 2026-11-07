@@ -14,9 +14,10 @@ Status: `open`, `running`, `done`, `parked`. Each finding goes into [LOG.md](LOG
 | 8 | Preloading across the engine | done | Limited by the old engine's cell attach. Cheap leads: persistent shader cache, page-cache warming, destination read-ahead | [preloading.md](../research-linux/preloading.md) |
 | 9 | Known engine issues and patch history | done | About 35 issues. Unaddressed: long-session slowdown, crashes after 1–3 h, the minimise crash, the corral, crowds, visual bugs | [known-engine-issues.md](../research-linux/known-engine-issues.md) |
 | 10 | Fast iteration: live switches, hot reload, Linux DLL build | done | 22 ini keys fully live. A hot-reload loader is designed. The DLL builds on Linux | [fast-iteration.md](../research-linux/fast-iteration.md) |
-| 11 | Spin-session mode and hotspot list | running | – | `linux-bench` (agent) |
-| 12 | Old-engine hotspots that could be parallelised | running | – | `oldengine-hotspots.md` (agent, branch `oldengine-research`) |
-| 13 | Custom DLL pipeline: self-test under Wine, `--dll`, A/B of our DLL against the installed one | running | – | branch `linux-dll-pipeline` (agent) |
+| 11 | Spin-session mode and hotspot list | done | `bench.py spin` (85 tests) and 8 hotspots worst-first. Not yet run on the real game | `linux/README.md`, `bench/scenarios/linux-hotspots.json` |
+| 12 | Old-engine hotspots that could be parallelised | done | Frame structure and the OT/GT lockstep mapped from the binary. Ranked: C0 profiler, C1a crossing teardown, C2 Havok threads, C1b row pre-parse, C3 pose on helpers | `oldengine-hotspots.md` (branch `oldengine-research2`) |
+| 13 | Custom DLL pipeline: self-test under Wine, `--dll`, A/B of our DLL against the installed one | running | 268 PASS, 0 FAIL, then a crash in the sky-light test (fixture suspected). Merge with spin and the crash fix are on branch `integration` | branch `linux-dll-pipeline` |
 | 14 | Do the vkd3d options (latency frames, present mode, `no_upload_hvv`, `nodxr`) help? | open | – | needs `--env` A/B runs |
 | 15 | Does ntfs-3g file reading cause pop-in? (page cache warm vs cold) | open | – | needs runs on door and travel scenes |
 | 16 | Does the game slow down over long sessions (memory)? | open | – | needs a 60–120 min spin session with memory sampling |
+| 17 | C0: old-engine profiler and crash context (read-only diagnostics fix) | running | – | branch `oldengine-research2` (agent) |
