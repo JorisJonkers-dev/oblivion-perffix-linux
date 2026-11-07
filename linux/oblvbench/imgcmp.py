@@ -307,3 +307,29 @@ def median_pic(pics):
     srt = [sorted(t) for t in zip(*(p.pix for p in pics))]
     pix = bytes(t[k // 2] if k % 2 else (t[k // 2 - 1] + t[k // 2]) // 2 for t in srt)
     return Pic(pics[0].w, pics[0].h, pix)
+
+
+def masked_pixels(p, masks=None):
+    """The unmasked pixels of a picture as one bytes object (same pixels for the same size and masks)."""
+    if not masks:
+        return bytes(p.pix)
+    out = bytearray()
+    for y, sg in enumerate(keep_segments(p.w, p.h, masks)):
+        row = p.pix[y * p.w:(y + 1) * p.w]
+        for x0, x1 in sg:
+            out += row[x0:x1]
+    return bytes(out)
+
+
+def hstack(pics, gap=4):
+    """Pictures of equal height side by side (dark gap) -> (w, h, pix)."""
+    if not pics:
+        raise ImageError("no pictures")
+    h = pics[0].h
+    if any(p.h != h for p in pics):
+        raise ImageError("height mismatch")
+    sep = bytes([20]) * gap
+    rows = []
+    for y in range(h):
+        rows.append(sep.join(bytes(p.pix[y * p.w:(y + 1) * p.w]) for p in pics))
+    return sum(p.w for p in pics) + gap * (len(pics) - 1), h, b"".join(rows)

@@ -29,6 +29,7 @@ class SpinGame(FakeGame):
         self.looks = []       # (wall time, GpuSceneParallelUpload as in the ini file at that moment, heading, pitch)
         self.cvars = {"r.Foo": "1.0"}
         self.cvar_calls = []
+        self.cams = []        # (wall time, argument) of every `cam` verb
         self.lock = threading.Lock()
 
     def handlers(self):
@@ -54,7 +55,11 @@ class SpinGame(FakeGame):
             self.cvar_calls.append((time.time(), k, v))
             return f"{k}={v}"
 
-        h.update(look=look, cvar=cvar, get=lambda m, r: f"{r}={self.cvars.get(r, 'nil')}")
+        def cam(m, rest):
+            self.cams.append((time.time(), rest))
+            return rest
+
+        h.update(look=look, cvar=cvar, cam=cam, get=lambda m, r: f"{r}={self.cvars.get(r, 'nil')}")
         return h
 
 
@@ -213,6 +218,70 @@ class SpinTest(test_runner.RunnerTest):
         self.assertIn("![lod 090](shots/sbs/lod/090.png)", gal)
         self.assertTrue((d / "shots/sbs/lod/090.png").exists())
         self.assert_all_put_back()
+
+    def test_turn_settle(self):
+        game = self
+        W, H = 160, 90
+        grabs = []
+
+        class Cap:
+            """A picture that is facing away (flat) until the snap, then a detail appears 0.7 s after it."""
+            def grab(self):
+                g = game.game
+                now = time.time()
+                time.sleep(0.02)
+                snaps = [c[0] for c in g.cams if c[1] == "snap"]
+                t = now - snaps[-1] if snaps else -1
+                grabs.append(now)
+                pix = bytearray(60 for _ in range(W * H))
+                if t >= 0.7:
+                    for y in range(40, 60):
+                        for x in range(60, 100):
+                            pix[y * W + x] = 200
+                return Pic(W, H, bytes(pix))
+
+        from oblvbench.imgcmp import Pic
+        result, fake, out = self.run_fake("on", turn_settle=True, turn_headings=[0, 90], turn_hold=0.3, turn_secs=1.6,
+                                          turn_interval=0.1, turn_capturer_factory=Cap)
+        self.assertEqual(result["outcome"], "ok", "\n".join(out))
+        d = self.tmp / "results/run1"
+        n = len(result["slots"])
+        for s in result["slots"]:
+            self.assertEqual(len(s["turns"]), 2)
+            for t in s["turns"]:
+                self.assertAlmostEqual(t["settleS"], 0.7, delta=0.2)
+                self.assertGreater(t["auc"], 0)
+                self.assertTrue((d / t["strip"]).exists())
+            self.assertAlmostEqual(s["seconds"], 1.0, delta=0.01)          # the fps laps are untouched
+        # schedule: hold looking away (heading + 180), then look H + cam snap, then captures every ~0.1 s
+        snaps = [c[0] for c in fake.cams if c[1] == "snap"]
+        self.assertEqual(len(snaps), 2 * n)
+        s0 = result["slots"][0]
+        self.assertGreaterEqual(snaps[0], s0["t1"] + 0.3 - 0.05)
+        before = [lk for lk in fake.looks if snaps[0] - 0.25 <= lk[0] < snaps[0] - 0.08]
+        self.assertTrue(before and all(abs(lk[2] - 180) < 0.01 for lk in before), before)
+        at = [lk for lk in fake.looks if abs(lk[0] - snaps[0]) < 0.05 and abs(lk[2] - 0) < 0.01]
+        self.assertTrue(at)
+        mine = [g for g in grabs if snaps[0] <= g < snaps[0] + 1.7]
+        self.assertGreaterEqual(len(mine), 14)
+        gaps = [b - a for a, b in zip(mine, mine[1:])]
+        self.assertAlmostEqual(sorted(gaps)[len(gaps) // 2], 0.1, delta=0.03)
+        ts = result["turnSettle"]
+        self.assertEqual({v["name"] for v in ts["variants"]}, {"base", "off", "lod"})
+        self.assertAlmostEqual(ts["variants"][0]["settleS"], 0.7, delta=0.2)
+        cfg = result["spin"]["turnSettle"]
+        self.assertEqual(cfg["headings"], [0.0, 90.0])
+        md = (d / "report.md").read_text()
+        self.assertIn("## Turn settle", md)
+        self.assertIn("### base slot 1 @ 0", (d / "images.md").read_text())
+        self.assert_all_put_back()
+
+    def test_no_turn_settle_by_default(self):
+        result, fake, out = self.run_fake("on")
+        self.assertNotIn("turnSettle", result)
+        self.assertEqual([c for c in fake.cams], [])
+        self.assertFalse((self.tmp / "results/run1/turn").exists())
+        self.assertNotIn("Turn settle", (self.tmp / "results/run1/report.md").read_text())
 
     def test_no_shots_by_default(self):
         result, fake, out = self.run_fake("on")
