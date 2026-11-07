@@ -1,6 +1,6 @@
 # The old engine: frame structure, hotspots and a ranked change list
 
-Scope: build 19115871 (TimeDateStamp 0xF1C2A1A4 as read by `pefile`; image base 0x140000000). Everything is an RVA written
+Scope: build 19115871 (TimeDateStamp 0xF19077A4 as read by `pefile`; image base 0x140000000). Everything is an RVA written
 `exe+0x...`. Static analysis only: the game and Steam were not started, the game folder was not modified, the exe was
 read through a read-only mapping.
 
