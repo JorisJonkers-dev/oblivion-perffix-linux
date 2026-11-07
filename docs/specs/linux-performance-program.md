@@ -154,8 +154,24 @@ Evidence and sources live in `docs/research-linux/`:
 - `proton-latency-streaming.md`
 - `texture-streaming.md`
 - `npc-creation.md`
+- `preloading.md`
+- `fast-iteration.md`
 
-Still being written: `preloading.md`, `known-engine-issues.md`, `fast-iteration.md`. They may add workstreams.
+Still being written: `known-engine-issues.md`. It may add workstreams.
+
+Native iteration status:
+- The fix DLL already cross-compiles on Linux (clang-cl, lld-link and llvm-ml with xwin's CRT/SDK, no source patches, branch `linux-build`).
+- Still to do before trusting it: run the self-test against the installed exe, load it under Wine, and benchmark the clang build against the MSVC release.
+- Live-switchable today (table in `fast-iteration.md`):
+  - 22 ini keys are fully live;
+  - about 60 are "installed at start, then live";
+  - 7 need a restart to switch on;
+  - 11 are start-up only.
+
+Preloading constraint:
+- Most of the costly work comes from the old engine's cell attach, so it cannot happen before the cell exists.
+- What may move earlier: read-only IO warming (page cache, read-ahead of the destination), shader cache persistence, GC placement, and the tail of the loading screen.
+- A persistent shader cache on a fast Linux filesystem is the cheapest high-value check: a cold driver cache costs about 6 minutes of compiles.
 
 First benchmark results:
 - Results folder: `linux/results/20261107-093709-own-off-vs-on/report.md`, made at the player's own settings, which are GPU-bound at 97-98% load.
