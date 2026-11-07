@@ -46,11 +46,11 @@ bool FakeDoReserve(void* /*reserve*/, void* condition)
     const void* const* vt = *reinterpret_cast<const void* const* const*>(src + 8);
     struct alignas(8) Stored { uint8_t b[16]; };
     auto* dst = new Stored{};
-    reinterpret_cast<MoveFn>(vt[0])(src + 8, dst->b + 8, dst->b, src, 8);
+    reinterpret_cast<MoveFn>(const_cast<void*>(vt[0]))(src + 8, dst->b + 8, dst->b, src, 8);
     g_reserveThread = std::thread([dst] {
         const void* const* v = *reinterpret_cast<const void* const* const*>(dst->b + 8);
-        while (!reinterpret_cast<CallFn>(v[1])(dst->b + 8, dst->b)) { g_condCalls++; Sleep(1); }
-        reinterpret_cast<DestroyFn>(v[3])(dst->b + 8, dst->b);
+        while (!reinterpret_cast<CallFn>(const_cast<void*>(v[1]))(dst->b + 8, dst->b)) { g_condCalls++; Sleep(1); }
+        reinterpret_cast<DestroyFn>(const_cast<void*>(v[3]))(dst->b + 8, dst->b);
         delete dst;
     });
     return true;
@@ -156,7 +156,7 @@ bool StressDoReserve(void*, void* condition)
     Lane* l = t_lane;
     auto* src = static_cast<uint8_t*>(condition);
     const void* const* vt = *reinterpret_cast<const void* const* const*>(src + 8);
-    reinterpret_cast<MoveFn>(vt[0])(src + 8, l->cond + 8, l->cond, src, 8);
+    reinterpret_cast<MoveFn>(const_cast<void*>(vt[0]))(src + 8, l->cond + 8, l->cond, src, 8);
     Post(l->goR, t_iter);
     return true;
 }
@@ -184,22 +184,22 @@ inline void LaneReserveThread(Lane* l)
         const void* const* v = *reinterpret_cast<const void* const* const*>(l->cond + 8);
         if (l->variant == 7) {       // the reserve worker stops: the condition is destroyed without ever being called
             Jitter(Rnd());
-            reinterpret_cast<DestroyFn>(v[3])(l->cond + 8, l->cond);
+            reinterpret_cast<DestroyFn>(const_cast<void*>(v[3]))(l->cond + 8, l->cond);
         } else if (l->variant >= 5) {   // CallAndMove into a second delegate, then Call that one
             alignas(8) uint8_t dst[16] = {};
             using CamFn = bool (*)(void*, uint8_t*, void*, uint32_t);
-            bool r = reinterpret_cast<CamFn>(v[2])(l->cond + 8, dst, l->cond, 8);
+            bool r = reinterpret_cast<CamFn>(const_cast<void*>(v[2]))(l->cond + 8, dst, l->cond, 8);
             const void* const* v2 = *reinterpret_cast<const void* const* const*>(dst + 8);
             for (int s = 0; !r; ++s) {
-                r = reinterpret_cast<CallFn>(v2[1])(dst + 8, dst);
+                r = reinterpret_cast<CallFn>(const_cast<void*>(v2[1]))(dst + 8, dst);
                 if (s > 2000) SwitchToThread();
             }
-            reinterpret_cast<DestroyFn>(v2[3])(dst + 8, dst);
-            reinterpret_cast<DestroyFn>(v[3])(l->cond + 8, l->cond);   // the moved-from delegate: nothing left to release
+            reinterpret_cast<DestroyFn>(const_cast<void*>(v2[3]))(dst + 8, dst);
+            reinterpret_cast<DestroyFn>(const_cast<void*>(v[3]))(l->cond + 8, l->cond);   // the moved-from delegate: nothing left to release
         } else {
-            for (int s = 0; !reinterpret_cast<CallFn>(v[1])(l->cond + 8, l->cond); ++s)
+            for (int s = 0; !reinterpret_cast<CallFn>(const_cast<void*>(v[1]))(l->cond + 8, l->cond); ++s)
                 if (s > 2000) SwitchToThread();
-            reinterpret_cast<DestroyFn>(v[3])(l->cond + 8, l->cond);
+            reinterpret_cast<DestroyFn>(const_cast<void*>(v[3]))(l->cond + 8, l->cond);
         }
         Post(l->doneR, seen);
     }

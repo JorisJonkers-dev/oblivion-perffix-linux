@@ -71,7 +71,7 @@ class DetailRunnerTest(test_runner.RunnerTest):
     def make_run(self, run_dir, out, fix, **kw):
         opts = runner.Options(scenario="mini", scenario_dir=self.tmp / "scen", fix=fix, label="t", warmup=0,
                               steam="true", run_dir=run_dir, profile="small", launch_timeout=20,
-                              detail_secs=1.6, detail_interval=0.1, **self.detail_kw)
+                              detail_secs=1.6, detail_interval=0.1, **{**self.detail_kw, **kw})
         return runner.Runner(self.paths, opts, say=out.append).run()
 
     detail_kw = {"detail": True}
@@ -180,6 +180,48 @@ class AbIniTest(unittest.TestCase):
         self.assertEqual([s[1] for s in seen], [["K=1"], ["K=1", "VtStreamingUploads=64"]])
         self.assertNotEqual(seen[0][2], seen[1][2])
         self.assertEqual(wc.call_args[0][2:4], ("on", "on+VtStreamingUploads=64"))
+
+
+    def test_ab_dll_side_with_ini(self):
+        import hashlib
+        import shutil
+        import tempfile
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d)
+        dll = d / "new.dll"
+        dll.write_bytes(b"abc")
+        sha8 = hashlib.sha256(b"abc").hexdigest()[:8]
+        a = self.parse(["ab", "--a", "on", "--b", f"dll:{dll}", "--rounds", "1", "--b-ini", "VtStreamingUploads=64"])
+        seen = []
+
+        class R:
+            def __init__(self, paths, opts, say=None):
+                seen.append((opts.fix, opts.dll, opts.fix_ini, opts.label))
+
+            def run(self):
+                return {"outcome": "ok"}
+
+        class Inst:
+            def install(self): pass
+            def remove(self): pass
+
+        class P:
+            results = Path("/nonexistent")
+
+        with mock.patch.object(bench, "Runner", R), mock.patch.object(bench, "installer", lambda p: Inst()), \
+                mock.patch.object(bench, "load_runs", lambda n, d: n), \
+                mock.patch.object(bench, "write_comparison", mock.Mock(return_value=Path("/tmp/x"))) as wc, \
+                mock.patch.object(bench.time, "sleep"), mock.patch.object(Path, "read_text", lambda s: ""):
+            bench.cmd_ab(a, P())
+        self.assertEqual([s[:3] for s in seen], [("on", None, None), ("on", str(dll), ["VtStreamingUploads=64"])])
+        self.assertIn("-Aon-r1", seen[0][3])
+        self.assertIn(f"-Bdll-{sha8}-r1", seen[1][3])
+        self.assertEqual(wc.call_args[0][2:4], ("on", f"dll-{sha8}+VtStreamingUploads=64"))
+
+    def test_identical_sides_refused(self):
+        a = self.parse(["ab", "--a", "on", "--b", "on"])
+        with self.assertRaises(SystemExit):
+            bench.cmd_ab(a, object())
 
 
 class ReportDetailTest(unittest.TestCase):

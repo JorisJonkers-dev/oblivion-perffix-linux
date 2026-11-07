@@ -172,6 +172,19 @@ the heading sent by about 0.3 s (`--cam-lag`), which the sector assignment subtr
 are cut by variant window (the ledger's clock is anchored on the two sync stalls) and ranked per variant in
 `diag/ledger-<variant>.txt`.
 
+## Tuning the spare-block cache offline (OsPageCache)
+
+Record one trace in the game, then try policies without it (details: [docs/research-linux/ideas/oscache-sim.md](../docs/research-linux/ideas/oscache-sim.md)):
+
+```bash
+linux/build-dll.sh                                      # build-linux/OblivionPerfFix.dll
+linux/bench.py run ... --dll build-linux/OblivionPerfFix.dll --fix-ini OsPageCacheTrace=1
+# the run folder gets diag/OblivionPerfFix-oscache-trace.bin; then
+python3 tools/oscache_sim.py info results/<run>/diag/OblivionPerfFix-oscache-trace.bin
+python3 tools/oscache_sim.py grid results/<run>/diag/OblivionPerfFix-oscache-trace.bin --costs build-linux/oscache-bench/costs.csv
+linux/oscache-bench.sh                                  # what one miss costs under headless Wine (no game, no Steam)
+```
+
 ## How the numbers are computed
 
 MangoHud logs every presented frame (`log_interval=0`, `autostart_log=1`, overlay cut down to a small fps counter; `no_display` stops MangoHud from logging):
@@ -245,3 +258,34 @@ the numbers from arrival to the end.
 | `no MangoHud log` | MangoHud did not reach the game (inside Steam's runtime container the MangoHud Vulkan layer must be visible; on NixOS e.g. via `programs.steam.extraPackages`/`extraCompatPackages`), check `mangohud.conf` in the run folder |
 | `NeedsUser` | start the game once by hand to the main menu |
 | a run was killed | `python3 linux/bench.py restore --ue4ss` |
+
+## Building and testing the DLL on Linux
+
+No Windows needed; everything runs through `nix` (clang-cl, lld-link, llvm-ml, xwin, Wine) and never starts the game or Steam.
+
+```sh
+linux/build-dll.sh                 # -> build-linux/OblivionPerfFix.dll (PE x86-64; first run fetches the MSVC CRT + Windows SDK with xwin, ~800 MB, into ~/.cache/oblivion-perffix/xwin)
+linux/selftest.sh [exe]            # builds tests/selftest.cpp with the same toolchain and runs it under Wine against the installed exe (read-only); exit != 0 on any FAIL or crash
+linux/dev-cycle.sh                 # build -> self-test
+linux/dev-cycle.sh --bench --scenario showcase [--scenes a,b] [--rounds 2] [--ini PATH]   # ... -> bench A/B: installed DLL vs the built one
+```
+
+`selftest.sh` runs headless (no `DISPLAY`, Wine's display drivers disabled, crash dialog off) in a throwaway prefix
+(`~/.cache/oblivion-perffix/wineprefix`, `OPF_WINEPREFIX`); it uses `wine` from `PATH`, else nixpkgs' `wineWow64Packages.stable`.
+Its console output is `build-linux/test/selftest.out.log` (the DLL's own log: `selftest.log`). Wine does not relocate an exe mapped with `LoadLibraryEx`, so the self-test
+is linked at `/BASE:0x1C0000000` to leave the game exe its preferred base (0x140000000); without that every scan of
+`.rdata` pointers fails.
+
+Benchmarking a built DLL without installing it:
+
+```sh
+python3 linux/bench.py run --scenario showcase --dll build-linux/OblivionPerfFix.dll [--dll-ini my.ini] --label try1
+python3 linux/bench.py ab  --scenario showcase --a on --b dll:build-linux/OblivionPerfFix.dll --rounds 2 --label try
+```
+
+`--dll` backs up the installed `version.dll` (and `OblivionPerfFix.ini` with `--dll-ini`) through the same file guard as the
+ini and window config, installs the given files for that run, and puts both back afterwards, also after Ctrl+C or a
+crash (the next run or `bench.py restore` repairs a killed one). Without `--dll-ini` your installed ini stays. The DLL's
+SHA-256 is in `result.json` under `dll` (`{"path", "sha256", ...}`; for a run without `--dll` it is the installed
+`version.dll`, with `"installed": true`). In `ab`, a side is `on`, `stock`, `off` or `dll:PATH[@stock]`; a DLL side is
+named `dll-<sha8>` in the labels and the report. `--dll` with `--fix off` is refused.

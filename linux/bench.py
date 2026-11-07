@@ -8,6 +8,7 @@ tools/Bench-Report.ps1. Standard library only. See linux/README.md.
   bench.py list [--scenario S]           scenarios, scenes, profiles
   bench.py run --scenario showcase --fix stock --label s1
   bench.py ab --scenario showcase --rounds 2 --a stock --b on
+  bench.py ab --scenario showcase --a on --b dll:build-linux/OblivionPerfFix.dll   # installed vs a built DLL
   bench.py report --a s1,s2 --b f1,f2
   bench.py spin --scenario linux-hotspots --scene cheydinhal-canal --variant off:ini:RdgParallelTranslate=0
 """
@@ -19,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from oblvbench import envfile, fixini, game, scenario, spin, ue4ss  # noqa: E402
+from oblvbench import dllvariant, envfile, fixini, game, scenario, spin, ue4ss  # noqa: E402
 from oblvbench.paths import Paths  # noqa: E402
 from oblvbench.report import load_runs, redetail_runs, write_comparison, write_redetail  # noqa: E402
 from oblvbench.runner import Options, Runner  # noqa: E402
@@ -49,7 +50,7 @@ def run_kwargs(a, **over):
               label=a.label, fix=getattr(a, "fix", "on"), profile=a.profile, warmup=a.warmup, keep_ue4ss=a.keep_ue4ss,
               show_hud=a.show_hud, pin=not a.no_pin, fixed_seed=not a.no_fixed_seed, native_res=a.native_res,
               stall_sec=a.stall_sec, max_minutes=a.max_minutes, launch_timeout=a.launch_timeout, steam=a.steam,
-              fix_ini=a.fix_ini, env=a.env, diag=a.diag, detail=a.detail,
+              fix_ini=a.fix_ini, env=a.env, diag=a.diag, dll=a.dll, dll_ini=a.dll_ini, detail=a.detail,
               detail_secs=a.detail_secs, detail_interval=a.detail_interval)
     kw.update(over)
     return kw
@@ -141,28 +142,47 @@ def side_ini(a, side):
     return (a.fix_ini or []) + (getattr(a, f"{side}_ini", None) or []) or None
 
 
+def side_spec(a, side):
+    """One A/B side: its mode (on/stock/off or dll:PATH[@stock]), the DLL it runs, its own ini keys and its names.
+    `tag` goes into run labels, `name` into the report (--name-a/--name-b, else mode/dll sha8 plus the ini keys)."""
+    fix, dll, tag = dllvariant.parse_side(getattr(a, side))
+    dll = dll or a.dll
+    if getattr(a, "dll", None) and tag in dllvariant.SIMPLE_SIDES:
+        tag = f"dll-{fixini.sha256(a.dll)[:8]}" + ("" if fix == "on" else "-" + fix)
+    own = getattr(a, f"{side}_ini", None) or []
+    extra = ",".join(own)
+    name = getattr(a, f"name_{side}", None) or (f"{tag}+{extra}" if extra else tag)
+    dllvariant.check(dll, None)
+    return {"fix": fix, "dll": dll, "tag": tag, "name": name,
+            "ident": (fix, str(dll) if dll else None, tuple(side_ini(a, side) or []))}
+
+
 def side_name(a, side):
-    name = getattr(a, f"name_{side}", None)
-    if name:
-        return name
-    mode = getattr(a, side)
-    extra = ",".join(getattr(a, f"{side}_ini", None) or [])
-    return f"{mode}+{extra}" if extra else mode
+    return side_spec(a, side)["name"]
 
 
 def cmd_ab(a, paths):
-    inst = installer(paths)
-    sides = [("a", a.a), ("b", a.b)]
     names = {"a": [], "b": []}
+    try:
+        sides = {k: side_spec(a, k) for k in ("a", "b")}
+        if a.dll_ini:
+            dllvariant.check(next((x["dll"] for x in sides.values() if x["dll"]), None), a.dll_ini)
+        if sides["a"]["ident"] == sides["b"]["ident"]:
+            raise ValueError("--a and --b are the same variant (same mode, dll and ini)")
+    except (ValueError, RuntimeError) as e:
+        raise SystemExit(f"ab: {e}")
+    inst = installer(paths)
     stamp = time.strftime("%m%d-%H%M")
     code = 0
     try:
         inst.install()
         for rnd in range(1, a.rounds + 1):
-            for key, mode in sides:
-                label = f"{a.label}-{stamp}-{key.upper()}{mode}-r{rnd}"
-                say(f"== round {rnd}/{a.rounds}: {key.upper()} = {side_name(a, key)} ({label})")
-                r = Runner(paths, run_options(a, label=label, fix=mode, keep_ue4ss=True, fix_ini=side_ini(a, key)),
+            for key in ("a", "b"):
+                mode, dll = sides[key]["fix"], sides[key]["dll"]
+                label = f"{a.label}-{stamp}-{key.upper()}{sides[key]['tag']}-r{rnd}"
+                say(f"== round {rnd}/{a.rounds}: {key.upper()} = {sides[key]['name']} ({label})")
+                r = Runner(paths, run_options(a, label=label, fix=mode, dll=dll, dll_ini=a.dll_ini if dll else None,
+                                              keep_ue4ss=True, fix_ini=side_ini(a, key)),
                            say=say).run()
                 if r["outcome"] == "failed":
                     raise SystemExit(f"run {label} failed: {r.get('error')} (see its report.md)")
@@ -176,7 +196,7 @@ def cmd_ab(a, paths):
             except Exception as e:
                 say(f"WARNING: UE4SS not removed: {e}")
     d = write_comparison(load_runs(names["a"], paths.results), load_runs(names["b"], paths.results),
-                         side_name(a, "a"), side_name(a, "b"), paths.results, a.label)
+                         sides["a"]["name"], sides["b"]["name"], paths.results, a.label)
     say(f"REPORT {d / 'report.md'}")
     print((d / "report.md").read_text())
     return code
@@ -224,6 +244,9 @@ def add_run_args(p):
                         "\"detail\": true) and report the time to sharp textures (costs some fps)")
     p.add_argument("--detail-secs", type=float, default=12, help="seconds of captures after the arrival (default 12)")
     p.add_argument("--detail-interval", type=float, default=0.5, help="seconds between captures (default 0.5)")
+    p.add_argument("--dll", metavar="PATH",
+                   help="run with this OblivionPerfFix.dll as version.dll (installed one backed up, restored afterwards)")
+    p.add_argument("--dll-ini", metavar="PATH", help="with --dll: also install this OblivionPerfFix.ini for the run")
     p.add_argument("--launch-timeout", type=float, default=240)
     p.add_argument("--steam", default="steam")
 
@@ -272,8 +295,8 @@ def main(argv=None):
     p = sub.add_parser("ab", help="alternate A and B in fresh games, then report")
     add_run_args(p)
     p.add_argument("--rounds", type=int, default=2)
-    p.add_argument("--a", default="stock", choices=["on", "stock", "off"])
-    p.add_argument("--b", default="on", choices=["on", "stock", "off"])
+    p.add_argument("--a", default="stock", metavar="SIDE", help="on | stock | off | dll:PATH[@stock] (default stock)")
+    p.add_argument("--b", default="on", metavar="SIDE", help="on | stock | off | dll:PATH[@stock] (default on)")
     p.add_argument("--a-ini", action="append", metavar="KEY=VAL[,KEY=VAL]",
                    help="[Fixes] keys for side A only (on top of --fix-ini, which applies to both)")
     p.add_argument("--b-ini", action="append", metavar="KEY=VAL[,KEY=VAL]", help="the same for side B")
@@ -291,9 +314,11 @@ def main(argv=None):
     p.add_argument("runs", nargs="+", help="run labels or folders (comma separated or several)")
     a = ap.parse_args(argv)
     if a.cmd == "ab":
-        a.fix = a.a
-        if a.a == a.b and not (a.a_ini or a.b_ini):
-            ap.error("--a and --b must differ (or differ in --a-ini / --b-ini)")
+        try:
+            a.fix = dllvariant.parse_side(a.a)[0]
+            dllvariant.parse_side(a.b)
+        except ValueError as e:
+            ap.error(str(e))
     paths = Paths(game_dir=a.game_dir) if a.game_dir else Paths()
 
     def stop(signum, frame):

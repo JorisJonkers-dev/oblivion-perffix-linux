@@ -8,7 +8,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import diagwin, fixini, scenario, spin
+from . import dllvariant, diagwin, fixini, scenario, spin
 from .paths import REPO
 from .runner import Options, Runner
 
@@ -83,13 +83,17 @@ class SpinRunner(Runner):
 
     def check_variants(self, scn):
         o = self.o
+        dllvariant.check(o.dll, o.dll_ini)
+        if o.dll and o.fix == "off":
+            raise RuntimeError("--dll with --fix off: the DLL would not be loaded")
         if o.fix == "off" and any(v.kind == "ini" for v in o.variants):
             raise spin.SpinError("ini variants need the fix DLL loaded")
         if any(v.kind == "ini" for v in o.variants):
-            if not self.paths.fix_ini.exists():
-                raise spin.SpinError(f"OblivionPerfFix.ini not found in {self.paths.win64}")
+            src = Path(o.dll_ini) if o.dll_ini else self.paths.fix_ini
+            if not src.exists():
+                raise spin.SpinError(f"OblivionPerfFix.ini not found: {src}")
             modes = spin.ini_modes(SHIPPED_INI.read_text(encoding="utf-8-sig", errors="replace"))
-            installed = fixini.fix_values(self.paths.fix_ini.read_text(encoding="utf-8-sig", errors="replace"))
+            installed = fixini.fix_values(src.read_text(encoding="utf-8-sig", errors="replace"))
             installed.update(fixini.parse_overrides(o.fix_ini))
             if o.diag:
                 installed.update(fixini.DIAG_KEYS)

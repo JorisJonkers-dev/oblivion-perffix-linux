@@ -111,6 +111,12 @@ Config LoadConfig(const wchar_t* iniPath)
     c.menuOpenFlashFix = get(L"Fixes", L"MenuOpenFlashFix", c.menuOpenFlashFix) != 0;
     c.vramCounterFix = get(L"Fixes", L"VramCounterFix", c.vramCounterFix) != 0;
     c.shaderScreenAfterDriverChange = get(L"Fixes", L"ShaderScreenAfterDriverChange", c.shaderScreenAfterDriverChange) != 0;
+    c.shaderScreenLinux = get(L"Fixes", L"ShaderScreenLinuxFingerprint", c.shaderScreenLinux) != 0;
+    c.shaderGateBeforePlay = get(L"Fixes", L"ShaderGateBeforePlay", c.shaderGateBeforePlay);
+    if (c.shaderGateBeforePlay < 0 || c.shaderGateBeforePlay > 2) c.shaderGateBeforePlay = 1;
+    c.shaderGateMaxSeconds = get(L"Fixes", L"ShaderGateMaxSeconds", c.shaderGateMaxSeconds);
+    if (c.shaderGateMaxSeconds < 10) c.shaderGateMaxSeconds = 10;
+    if (c.shaderGateMaxSeconds > 3600) c.shaderGateMaxSeconds = 3600;
     c.physAnimNoEmptyLock = get(L"Fixes", L"PhysAnimNoEmptyLock", c.physAnimNoEmptyLock) != 0;
     c.rigTraceReuse = get(L"Fixes", L"RigTraceReuse", c.rigTraceReuse);
     if (c.rigTraceReuse < 0 || c.rigTraceReuse > 2) c.rigTraceReuse = 1;  // 0 off, 1 on, 2 verify; anything else = on
@@ -118,6 +124,11 @@ Config LoadConfig(const wchar_t* iniPath)
     c.osPageCache = get(L"Fixes", L"OsPageCache", c.osPageCache);
     c.osPageCacheMB = get(L"Fixes", L"OsPageCacheMB", c.osPageCacheMB);
     c.osPageCacheTrimSeconds = get(L"Fixes", L"OsPageCacheTrimSeconds", c.osPageCacheTrimSeconds);
+    c.osPageCacheKeepMs = get(L"Fixes", L"OsPageCacheKeepMs", c.osPageCacheKeepMs);
+    c.osPageCacheTrace = get(L"Fixes", L"OsPageCacheTrace", c.osPageCacheTrace);
+    c.osPageCacheTraceMB = get(L"Fixes", L"OsPageCacheTraceMB", c.osPageCacheTraceMB);
+    c.psoColdGuardWine = get(L"Fixes", L"PsoColdGuardWine", c.psoColdGuardWine) != 0;
+    c.sharedMemoryGpuWine = get(L"Fixes", L"SharedMemoryGpuWine", c.sharedMemoryGpuWine) != 0;
     c.psoPrecompileFast = get(L"Fixes", L"PsoPrecompileFast", c.psoPrecompileFast) != 0;
     c.psoPrecompileFastInGameMenus = get(L"Fixes", L"PsoPrecompileFastInGameMenus", c.psoPrecompileFastInGameMenus) != 0;
     c.psoPrecompileFastBudgetMs = get(L"Fixes", L"PsoPrecompileFastBudgetMs", c.psoPrecompileFastBudgetMs);
@@ -131,12 +142,18 @@ Config LoadConfig(const wchar_t* iniPath)
     c.gpuSceneParallelUpload = get(L"Fixes", L"GpuSceneParallelUpload", c.gpuSceneParallelUpload) != 0;
     c.hitchLedger = get(L"Fixes", L"HitchLedger", c.hitchLedger) != 0;
     c.hitchLedgerMs = get(L"Fixes", L"HitchLedgerMs", c.hitchLedgerMs);
+    c.otProfile = get(L"Fixes", L"OtProfile", c.otProfile) != 0;
+    c.otProfileMs = get(L"Fixes", L"OtProfileMs", c.otProfileMs);
+    c.otProfileSampleHz = get(L"Fixes", L"OtProfileSampleHz", c.otProfileSampleHz);
+    c.otCrashContext = get(L"Fixes", L"OtCrashContext", c.otCrashContext) != 0;
     c.hitchLedgerTickSplit = get(L"Fixes", L"HitchLedgerTickSplit", c.hitchLedgerTickSplit) != 0;
     c.vtStreamingUploads = get(L"Fixes", L"VtStreamingUploads", c.vtStreamingUploads);
     c.doorDiag = get(L"Fixes", L"DoorDiag", c.doorDiag) != 0;
     c.doorDiagEarlyStream = get(L"Fixes", L"DoorDiagEarlyStream", c.doorDiagEarlyStream) != 0;
     c.fadeVtFlushSkip = get(L"Fixes", L"FadeVtFlushSkip", c.fadeVtFlushSkip) != 0;
     c.streamBehindLoading = get(L"Fixes", L"StreamBehindLoadingScreen", c.streamBehindLoading) != 0;
+    c.streamPrewarm = get(L"Fixes", L"StreamPrewarmBehindLoading", c.streamPrewarm) != 0;
+    c.streamPrewarmMaxHoldMs = get(L"Fixes", L"StreamPrewarmMaxHoldMs", c.streamPrewarmMaxHoldMs);
     c.unfreezeBehindLoading = get(L"Fixes", L"UnfreezeBehindLoadingScreen", c.unfreezeBehindLoading);
     c.unfreezeBehindLoadingFastTravel = get(L"Fixes", L"UnfreezeBehindLoadingScreenFastTravel", c.unfreezeBehindLoadingFastTravel);
     c.npcCreationPacing = get(L"Fixes", L"NpcCreationPacing", c.npcCreationPacing) != 0;
@@ -168,6 +185,48 @@ Config LoadConfig(const wchar_t* iniPath)
     c.gpuCrashReport = get(L"General", L"GpuCrashReport", c.gpuCrashReport) != 0;
     c.statsIntervalSeconds = get(L"General", L"StatsIntervalSeconds", c.statsIntervalSeconds);
     return c;
+}
+
+bool IsWine()
+{
+    static const bool wine = [] {
+        HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+        return ntdll && GetProcAddress(ntdll, "wine_get_version") != nullptr;
+    }();
+    return wine;
+}
+
+// The ini is re-read only when it changed: every GetPrivateProfileIntW opens and parses the whole file (a wineserver round
+// trip each under Wine, ~114 per second). One GetFileAttributesExW per second says whether size or last-write time moved.
+// A file written within the last 2 s is re-read anyway (an editor may still be writing; coarse timestamps), so a live switch
+// still lands within about a second and a half-written file never sticks.
+bool LoadConfigIfChanged(const wchar_t* iniPath, Config* cfg, const unsigned long long* nowFileTime)
+{
+    static bool have = false, haveStat = false;
+    static ULONGLONG lastWrite = 0, size = 0;
+    WIN32_FILE_ATTRIBUTE_DATA a{};
+    const bool ok = GetFileAttributesExW(iniPath, GetFileExInfoStandard, &a) != 0;
+    ULONGLONG w = 0, sz = 0, nowFt = 0;
+    if (ok) {
+        w = (static_cast<ULONGLONG>(a.ftLastWriteTime.dwHighDateTime) << 32) | a.ftLastWriteTime.dwLowDateTime;
+        sz = (static_cast<ULONGLONG>(a.nFileSizeHigh) << 32) | a.nFileSizeLow;
+        if (nowFileTime) {
+            nowFt = *nowFileTime;
+        } else {
+            FILETIME now;
+            GetSystemTimeAsFileTime(&now);
+            nowFt = (static_cast<ULONGLONG>(now.dwHighDateTime) << 32) | now.dwLowDateTime;
+        }
+    }
+    const bool same = have && ok == haveStat && (!ok || (w == lastWrite && sz == size));
+    const bool fresh = ok && nowFt >= w && nowFt - w < 20000000ull;  // written within 2 s (100 ns units)
+    if (same && !fresh) return false;
+    *cfg = LoadConfig(iniPath);
+    have = true;
+    haveStat = ok;
+    lastWrite = w;
+    size = sz;
+    return true;
 }
 
 }  // namespace opf

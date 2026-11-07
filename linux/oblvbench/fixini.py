@@ -160,7 +160,9 @@ def parse_overrides(items):
 
 
 DIAG_KEYS = {"HitchLedger": "1", "HitchLedgerTickSplit": "1"}
-DIAG_FILES = ("OblivionPerfFix-ledger.csv", "OblivionPerfFix-ticksplit.csv", "OblivionPerfFix.log")
+# OblivionPerfFix-oscache-trace.bin only exists with OsPageCacheTrace=1 (tools/oscache_sim.py replays it)
+DIAG_FILES = ("OblivionPerfFix-ledger.csv", "OblivionPerfFix-ticksplit.csv", "OblivionPerfFix-otprofile.csv",
+              "OblivionPerfFix.log", "OblivionPerfFix-oscache-trace.bin")
 
 
 def write_stock_ini(ini_path, guard):

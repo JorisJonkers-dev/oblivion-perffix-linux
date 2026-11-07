@@ -9,6 +9,52 @@ Downloads, checksums and build attestations: https://github.com/LTSharpe/Oblivio
 Bug fixes say whose bug it was: **game bug** = also happens without OblivionPerfFix (in the game, its engine or a
 driver library); **our bug** = caused by an earlier version of OblivionPerfFix.
 
+## Unreleased
+
+- **New diagnostics `OtProfile` and `OtCrashContext`** (off; for finding what the game's old engine thread spends its
+  frame on, and which stage it was in when it crashed). They only read the clock and the game's own stage number:
+  nothing the game does changes. `OtProfile=1` at start-up writes `OblivionPerfFix-otprofile.csv` (slow frames and
+  2-second totals: busy vs waiting for the main thread, and the time of the character passes, the cell grid, doors, water and
+  saving; `tools/ot_profile.py` ranks it). `OtCrashContext=1` adds the stage, the last stages and the fault address to
+  `OblivionPerfFix.log` when that thread faults, and leaves the exception alone. Keys `OtProfileMs` and `OtProfileSampleHz`.
+  Start-up, then live; nothing is installed when both are 0.
+
+- **`StreamPrewarmBehindLoading`** (new, 0 until measured) and **`StreamPrewarmMaxHoldMs`** (new, 0): while a door, gate or
+  fast-travel loading screen idles the texture streaming limits (virtual texture pages uploaded and tiles produced per
+  frame, the mip streamer's update interval) are raised and put back exactly before the fade-in, so exteriors are
+  sharper when the picture appears. Same finished image; the optional hold keeps the loading screen up longer.
+  Needs `StreamBehindLoadingScreen`. Log tag `[prewarm]`.
+Proton / Wine awareness (the game always runs under Proton on Linux; `IsWine()` is the one place that tells).
+
+- **`ShaderGateBeforePlay`** (new, 1 = under Wine/Proton only; 2 = everywhere; 0 = off) and **`ShaderGateMaxSeconds`**
+  (600): the start-up shader precompile no longer runs on into play. The first load after the main menu stays on its
+  loading screen while the precompile still runs (the fade gate's tick is skipped, as `UnfreezeBehindLoadingScreen`
+  does), at the engine's fast pace; released when the precompile ends, at the cap, or after 45 s with the engine's queue
+  empty. Only that first load. Timing only. Warm Proton logs showed the precompile still running 40-58 s after the world
+  was reached on every launch (the Fast pace only runs while a menu or loading screen is up); the log now says "finished
+  before play" or "IN PLAY" and the `[gate]` lines show the hold. Needs `PsoPrecompileFast` and `StreamBehindLoadingScreen`.
+- **`ShaderScreenLinuxFingerprint`** (new, 1; only acts under Wine): the shader screen after a driver change cannot see
+  Mesa or vkd3d-proton updates under Proton (the driver version reads 35.0.65535.65535). The record in
+  `OblivionPerfFix-gpu.txt` now also holds the Wine and Proton versions, a hash of vkd3d-proton's d3d12core.dll, the
+  Vulkan driver files with the Mesa version, and the shader cache sizes; any change, or a wiped cache (under half the
+  recorded size), brings the game's shader screen back at the next start. Windows is unchanged; an older record is only
+  extended.
+- **`PsoColdGuardWine`** (new, 1): under Wine the cold-cache guard of `PsoPrecompileFast` never worked, because the
+  driver's compile threads are not visible there ("no driver compile threads found" every run). It now also watches
+  whether UE's pipeline queue drains (at least 250 waiting and no 5% fall in 6 seconds in a row = a slow, cold-cache
+  build) and keeps the game's pace then. No effect on Windows. A guess to be confirmed on a cold shader cache; 0 = off.
+- **`OsPageCacheTrace`** (new, 0), **`OsPageCacheTraceMB`** (64): records every alloc / free the spare-block list sees into
+  `OblivionPerfFix-oscache-trace.bin` (a bounded ring, written by a background thread) so `tools/oscache_sim.py` can
+  replay it against other caps, keep times and size rounding offline; `linux/oscache-bench.sh` measures the cost of a miss
+  under Wine. Off by default; no change to what the list does.
+- **`OsPageCacheMB`, `OsPageCacheKeepMs`** (new in the ini; defaults unchanged, 64 MB and 5 s): tune the spare-block
+  cache; the log prints hits and misses per block size. Proton runs showed only 17-44% hits.
+- **`SharedMemoryGpuWine`** (new, 1): under Wine the GPU's memory kind is now asked too, so `SharedMemoryGpu=2` applies
+  to a Steam Deck or an APU on Linux. A discrete card answers "not UMA": no change. 0 = the old skip under Wine.
+- **The ini is parsed only when it changed** (always on): the monitor thread compares the file's size and last-write
+  time once a second instead of re-reading about 114 keys (a wineserver round trip each under Wine). Live switching still
+  takes about a second.
+
 ## 1.2.4-beta
 For Oblivion Remastered, Steam build 19115871 (Game Pass experimental). Thanks to Mishu117 for pull requests #33, #34,
 #35 and #36, to mkusm for pull request #31, to solir2 for the ROG Ally report, and to everyone who reported results and
