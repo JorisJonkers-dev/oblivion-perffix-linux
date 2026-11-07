@@ -798,6 +798,8 @@ void SetShaderGate(bool on, uint32_t maxSeconds)
     g_gateMaxSec = maxSeconds < 10 ? 10 : maxSeconds;
 }
 
+bool PsoPlayStarted() { return g_played.load(); }
+
 bool ShaderGateOn() { return g_gateOn.load(); }
 
 namespace {
@@ -826,7 +828,8 @@ bool ShaderGateHoldsTick()
         return false;
     }
     if (!g_menuSeen) return false;   // the start-up's own transition into the main menu
-    if (!Precompiling()) {
+    const bool replaying = PsoReplayBusy();   // PsoRecordReplay: the recorded pipelines are being created
+    if (!Precompiling() && !replaying) {
         if (g_gateHolding.load()) GateEnd("the precompile has finished");
         else if (!g_gateSawLoad) {
             g_gateSawLoad = true;
@@ -849,6 +852,7 @@ bool ShaderGateHoldsTick()
         GateEnd("cap reached: the precompile goes on in play");
         return false;
     }
+    if (replaying) g_activeAt = now;
     if (now - g_activeAt > g_gateStallMs) {
         GateEnd("not progressing: UE's queue empty while the flag stays set");
         return false;
