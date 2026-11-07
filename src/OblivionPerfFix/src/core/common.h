@@ -280,6 +280,10 @@ struct Config {
                                        // (needs HitchLedger=1; installed only if on at start-up, then live)
     bool vramCounterFix = true;        // VramCounterFix: the Graphics page's "Show VRAM" counter shows the game's video
                                        // memory use and budget instead of 0/0 (game bug; start-up install, live)
+    int shaderGateBeforePlay = 1;        // ShaderGateBeforePlay: 0 off, 1 on under Wine/Proton only, 2 everywhere (live)
+    int shaderGateMaxSeconds = 600;      // ShaderGateMaxSeconds: the longest the first load is held
+    bool shaderScreenLinux = true;       // ShaderScreenLinuxFingerprint: under Wine the shader screen also follows Mesa, vkd3d-proton, Wine
+                                         // and the shader caches (not only DXGI's constant driver version)
     bool shaderScreenAfterDriverChange = true;   // ShaderScreenAfterDriverChange (game bug): the game's first-launch
                                                  // shader screen at start-up after a driver/card change (start-up only)
     bool npcCreationPacing = true;    // NpcCreationPacing: far-away NPC creation spread over frames 
@@ -882,10 +886,13 @@ void VramCounterFixTestSetup(void* original, bool (*latest)(uint64_t*, uint64_t*
 bool LatestGameVram(uint64_t* used, uint64_t* budget);  // memory_monitor.cpp: last DXGI sample (bytes); false = none yet
 // shader_screen.cpp (ShaderScreenAfterDriverChange, game bug): the start-up's Save_Settings check (which decides the
 // game's first-launch shader screen) answers "no save" once after the graphics card or driver changed
+void SetShaderScreenLinux(bool on);  // ShaderScreenLinuxFingerprint (before Apply...): Wine only
 bool ApplyShaderScreenAfterDriverChange(bool beforeGameCode, const wchar_t* dir);  // start-up only; dir: the DLL's folder
 bool ShaderScreenInfo(uint8_t** call, uint8_t** original, uint8_t** stub, void** hook);
 void ShaderScreenTestSetup(void* original, bool (*gpu)(char*, size_t), const wchar_t* recordPath);  // self-test
 void ShaderScreenPrecompileFinished();  // pso_precompile.cpp: the start-up precompile ended (records a pending card/driver)
+void ShaderScreenTestLinux(bool (*probe)(char*, size_t, uint64_t*, uint64_t*));  // self-test: fake Linux-side tokens and cache sizes
+bool ShaderScreenRealLinuxProbe(char* tokens, size_t size, uint64_t* vkd3dBytes, uint64_t* mesaBytes);  // self-test: the real probe (false off Wine)
 int ShaderScreenShownUnrecorded();      // self-test: the "shown N" count this start-up wrote (-1: the record not writable)
 // menu_hdr_background.cpp (HdrMenuBackground, TRADE-OFF, off by default): in HDR10 the menu's background
 // screenshot holds sRGB-encoded PQ values the UI shows as colour; remapped to sRGB at the same nits
@@ -969,6 +976,14 @@ void PsoPrecompileTestTiming(uint32_t fastMaxMs, uint32_t driverRetryMs);  // se
 void SetPsoPrecompileFastBudget(float ms, int coldQueue);  // live: render-thread ms per frame at the faster pace; the queue that
                                                            // means a cold driver cache (0: no cold-cache guard at all)
 void PsoPrecompileTestStatics(uint32_t* batchSize, float* batchTime, int64_t* active);  // self-test: fakes for the statics
+void SetShaderGate(bool on, uint32_t maxSeconds);  // live: ShaderGateBeforePlay effective (needs the gate slot hook), the cap in seconds
+bool ShaderGateOn();
+bool ShaderGateHooked();                      // stream_behind_loading.cpp: the fade gate's tick goes through ShaderGateHoldsTick
+inline bool ShaderGateWanted(const Config& c) { return c.shaderGateBeforePlay == 2 || (c.shaderGateBeforePlay == 1 && IsWine()); }
+bool ShaderGateHoldsTick();                    // stream_behind_loading.cpp's fade-gate tick (game thread): true = skip it, the loading screen stays
+void PsoPrecompileTestGate(uint32_t stallMs, uint32_t capMs = 0);  // self-test: the gate forgotten, the "queue empty" release and the cap shortened (ms)
+bool PsoPrecompileGateHolding();               // self-test
+const char* PsoPrecompileGateEnd();            // self-test: why the last hold ended
 void SetPsoColdGuardWine(bool on);             // live: PsoColdGuardWine (queue-trend guard; only acts under Wine)
 void PsoPrecompileTestQueueTrend(int64_t queued);  // self-test: one second's reading of UE's queue depth (the Wine guard)
 void PsoPrecompileWatchDriver();               // monitor thread, once a second: the driver's compile threads (cold-cache guard)
@@ -1448,7 +1463,7 @@ struct StreamBehindLoadingInfo {
     uint8_t* setLoadingFreeze = nullptr;  // prototype UnfreezeBehindLoadingScreen
 };
 bool FindStreamBehindLoading(StreamBehindLoadingInfo* out);  // locate only; false = unavailable (logged)
-bool InstallStreamBehindLoading(bool beforeGameCode, bool tradeOffs);  // one entry detour (the gate-arming function); needs the fade hook
+bool InstallStreamBehindLoading(bool beforeGameCode, bool tradeOffs, bool shaderGate = false);  // one entry detour (the gate-arming function); needs the fade hook
                                                             // found; tradeOffs: also UnfreezeBehindLoadingScreen's redirections
 void SetStreamBehindLoading(bool on);                       // monitor thread, live
 void SetUnfreezeBehindLoading(int ms);                      // monitor thread, live (0 = off); prototype, trade-off

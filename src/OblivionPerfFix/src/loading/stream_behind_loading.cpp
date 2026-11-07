@@ -190,7 +190,7 @@ struct State {
     std::atomic<uint32_t> transitions{0}, streamed{0};
     std::atomic<uint64_t> leadUs{0};
     // the world drawing for UnfreezeBehindLoadingScreen (found / hooked optionally; the rest works without it)
-    bool drawFound = false, drawHooked = false;
+    bool drawFound = false, drawHooked = false, gateHooked = false;   // gateHooked: ShaderGateBeforePlay's skip is in the slots
     void** execSlot = nullptr;
     void** execIfSafeSlot = nullptr;
     ExecFn origExec = nullptr;
@@ -574,12 +574,14 @@ bool HoldGate(void* delegateInstance)
 
 void ExecHook(void* delegateInstance)
 {
+    if (g.gateHooked && ShaderGateHoldsTick()) return;
     if (HoldGate(delegateInstance)) return;
     g.origExec(delegateInstance);
 }
 
 bool ExecIfSafeHook(void* delegateInstance)
 {
+    if (g.gateHooked && ShaderGateHoldsTick()) return true;   // bound and safe; the tick just did nothing
     if (HoldGate(delegateInstance)) return true;  // bound and safe; the tick just did nothing
     return g.origExecIfSafe(delegateInstance);
 }
@@ -664,7 +666,9 @@ bool FindStreamBehindLoading(StreamBehindLoadingInfo* out)
     return true;
 }
 
-bool InstallStreamBehindLoading(bool beforeGameCode, bool tradeOffs)
+bool ShaderGateHooked() { return g.gateHooked; }
+
+bool InstallStreamBehindLoading(bool beforeGameCode, bool tradeOffs, bool shaderGate)
 {
     if (g.installed) return true;
     if (!FindStreamBehindLoading(nullptr)) return false;
@@ -692,6 +696,20 @@ bool InstallStreamBehindLoading(bool beforeGameCode, bool tradeOffs)
     // only change to the game's code is the gate-arming detour above.
     g.loadHookTried = !tradeOffs;
     if (!tradeOffs) {
+        // ShaderGateBeforePlay alone: just the gate delegate's two slots (pass-through unless the precompile asks to hold a tick)
+        if (shaderGate && g.drawFound) {
+            if (WritePointer(g.execSlot, reinterpret_cast<void*>(&ExecHook)) &&
+                WritePointer(g.execIfSafeSlot, reinterpret_cast<void*>(&ExecIfSafeHook))) {
+                g.gateHooked = true;
+                Log("[streamload] ShaderGateBeforePlay: the fade gate's tick (slots exe+0x%X/+0x%X) can be held while the shader precompile runs",
+                    Rva(g.execSlot), Rva(g.execIfSafeSlot));
+            } else {
+                WritePointer(g.execSlot, reinterpret_cast<void*>(g.origExec));
+                Log("[streamload] ShaderGateBeforePlay: writing the gate delegate's slots failed: not available");
+            }
+        } else if (shaderGate) {
+            Log("[streamload] ShaderGateBeforePlay: the gate delegate's slots were not found: not available");
+        }
         g.installed = true;
         Log("[streamload] installed: textures of a new area stream behind the loading screen once its loading is done "
             "(UnfreezeBehindLoadingScreen 0 at start-up: its hooks not installed; takes a restart to switch on)");
@@ -701,6 +719,7 @@ bool InstallStreamBehindLoading(bool beforeGameCode, bool tradeOffs)
         if (WritePointer(g.execSlot, reinterpret_cast<void*>(&ExecHook)) &&
             WritePointer(g.execIfSafeSlot, reinterpret_cast<void*>(&ExecIfSafeHook))) {
             g.drawHooked = true;
+            g.gateHooked = shaderGate;
         } else {
             WritePointer(g.execSlot, reinterpret_cast<void*>(g.origExec));
             Log("[streamload] UnfreezeBehindLoadingScreen: writing the gate delegate's slots failed: not available");

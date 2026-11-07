@@ -2426,6 +2426,24 @@ Game bugs (they also happen without OblivionPerfFix). Bugs in our own fixes are 
 
 <a id="vramcounterfix"></a>
 
+#### Proton: why a warm launch still precompiles in play, and the gate (2026-11-07)
+
+- **Runs** (`linux/results/20261107-*/diag/OblivionPerfFix.log`, RX 7900 XTX, RADV): the precompile is seen from +9-10 s;
+  the faster pace starts at +19-20 s (the main menu: before that the game's own Fast request, from PreLoadMap, passes);
+  the benchmark (and a player pressing Continue) starts the load at ~+31 s, the pace goes back to Background ("in play"),
+  and the precompile ends at +40 to +58 s: 20-37 s of it at the game's pace, in play. Queue max 86, no driver threads
+  found, never cold. Nothing restarts it and nothing re-validates the pipelines: the work simply is not done when play
+  begins, because the menu-time pace (4 ms of render thread per frame, batch 8) needs ~25-30 s on this machine and the
+  menu is left earlier. (Not measured: the pipeline rate at the 4 ms budget; the first ~10 s after "seen" are the
+  game's own Fast.)
+- **Why the screen cannot do this for every launch:** DoesSaveGameExist("Save_Settings") is asked at exe+0x44E12C4
+  before the pipeline cache exists; there is no queue to read yet. The screen can only follow a prediction: a changed
+  fingerprint (Mesa, vkd3d-proton, Wine/Proton versions, wiped caches: `ShaderScreenLinuxFingerprint`).
+- **The gate (`ShaderGateBeforePlay`):** the first load after the main menu is held at its loading screen by skipping the
+  fade gate's 0.5 s tick (a skipped tick simply comes again, as `UnfreezeBehindLoadingScreen` already relies on) while
+  IsPrecompiling. The loading screen runs UE's Fast values (16 ms). Not yet measured live; the live test plan is in
+  the how-it-works section and the final report of this branch.
+
 ### The "Show VRAM" counter (`VramCounterFix`, game bug)
 
 [Explanation](how-it-works.md#vramcounterfix).

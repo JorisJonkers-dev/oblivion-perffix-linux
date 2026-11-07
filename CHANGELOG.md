@@ -12,6 +12,19 @@ driver library); **our bug** = caused by an earlier version of OblivionPerfFix.
 ## Unreleased
 Proton / Wine awareness (the game always runs under Proton on Linux; `IsWine()` is the one place that tells).
 
+- **`ShaderGateBeforePlay`** (new, 1 = under Wine/Proton only; 2 = everywhere; 0 = off) and **`ShaderGateMaxSeconds`**
+  (600): the start-up shader precompile no longer runs on into play. The first load after the main menu stays on its
+  loading screen while the precompile still runs (the fade gate's tick is skipped, as `UnfreezeBehindLoadingScreen`
+  does), at the engine's fast pace; released when the precompile ends, at the cap, or after 45 s with the engine's queue
+  empty. Only that first load. Timing only. Warm Proton logs showed the precompile still running 40-58 s after the world
+  was reached on every launch (the Fast pace only runs while a menu or loading screen is up); the log now says "finished
+  before play" or "IN PLAY" and the `[gate]` lines show the hold. Needs `PsoPrecompileFast` and `StreamBehindLoadingScreen`.
+- **`ShaderScreenLinuxFingerprint`** (new, 1; only acts under Wine): the shader screen after a driver change cannot see
+  Mesa or vkd3d-proton updates under Proton (the driver version reads 35.0.65535.65535). The record in
+  `OblivionPerfFix-gpu.txt` now also holds the Wine and Proton versions, a hash of vkd3d-proton's d3d12core.dll, the
+  Vulkan driver files with the Mesa version, and the shader cache sizes; any change, or a wiped cache (under half the
+  recorded size), brings the game's shader screen back at the next start. Windows is unchanged; an older record is only
+  extended.
 - **`PsoColdGuardWine`** (new, 1): under Wine the cold-cache guard of `PsoPrecompileFast` never worked, because the
   driver's compile threads are not visible there ("no driver compile threads found" every run). It now also watches
   whether UE's pipeline queue drains (at least 250 waiting and no 5% fall in 6 seconds in a row = a slow, cold-cache
