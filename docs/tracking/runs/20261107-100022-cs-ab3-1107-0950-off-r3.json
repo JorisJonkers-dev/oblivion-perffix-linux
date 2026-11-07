@@ -1,0 +1,61 @@
+{
+ "diagFiles": null,
+ "dll": null,
+ "env": {
+  "MANGOHUD": "1",
+  "MANGOHUD_CONFIGFILE": "/home/ExtraToast/Projects/opf-run/linux/results/20261107-100022-cs-ab3-1107-0950-off-r3/mangohud.conf",
+  "OBLV_BENCH_MARKER": "/home/ExtraToast/Projects/opf-run/run/launch-marker.txt",
+  "OBLV_GAME_ARGS": "-FixedSeed",
+  "WINEDLLOVERRIDES": "version=b;dwmapi=n,b"
+ },
+ "fix": "off",
+ "fixIniOverrides": null,
+ "label": "cs-ab3-1107-0950-off-r3",
+ "loadSec": 44.7,
+ "outcome": "ok",
+ "profile": {
+  "description": "Your own settings as they are (resolution, window mode, upscaler, quality, frame cap): nothing is changed. Used by -Watch. Results depend on those settings, so say which ones you used when you share them",
+  "name": "own",
+  "own": true
+ },
+ "scenario": "cheydinhal",
+ "scenes": [
+  {
+   "avgMs": 13.5,
+   "cond": {
+    "atEnd": "hour=12.008 wx=Clear:1.00 npcs=5 near=BP_CheydinhalGuardCityPatrolNight01@123682,91553;BP_MS10CheydinhalHouseGuard01@122863,89512;BP_Ohtimbar@123790,91727",
+    "atSet": "hour=12.001 wx=Clear:1.00",
+    "hour": "12",
+    "pinned": true,
+    "timescale": "1",
+    "weather": "Clear"
+   },
+   "cpuLoad": 52.4,
+   "fps": 74.1,
+   "frames": 1482,
+   "gpuLoad": 95.5,
+   "hitchMs": 0,
+   "hitches": 0,
+   "hour": "12.01",
+   "id": "chapel-square-noon",
+   "level": "L_CheydinhalWorld",
+   "longestGapMs": 25.8,
+   "low01": 45.5,
+   "low1": 56.1,
+   "over100": 0,
+   "over250": 0,
+   "over50": 0,
+   "p50Ms": 13.26,
+   "p95Ms": 16.15,
+   "p999Ms": 21.96,
+   "p99Ms": 17.83,
+   "seconds": 20.0,
+   "sub": "",
+   "type": "static",
+   "worstMs": 25.8
+  }
+ ],
+ "start": "fresh",
+ "time": "2026-11-07 10:00:22",
+ "warnings": []
+}

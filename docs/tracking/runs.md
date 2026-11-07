@@ -9,6 +9,7 @@ hitches (frames longer than max(2 x median, 40 ms)), CPU/GPU load (%).
 | report | what |
 |---|---|
 | [20261107-093709-own-off-vs-on](runs/20261107-093709-own-off-vs-on.md) | off vs on |
+| [20261107-100513-cs-ab3](runs/20261107-100513-cs-ab3.md) | off vs on |
 
 ## Runs
 
@@ -41,3 +42,9 @@ hitches (frames longer than max(2 x median, 40 ms)), CPU/GPU load (%).
 | [20261107-094211-cs-npc-off](runs/20261107-094211-cs-npc-off.md) | cs-npc-off | cheydinhal | chapel-square-noon | own | fix=on ini:ClothBuildDefer=0,ClothRegisterLite=0,NpcCreationPacing=0,NpcFadeInNoRebuild=0 | 41.9 | 16.5 | 9.5 | 105.8 | 146 | 82 | 69 | ok |
 | [20261107-094430-cs-phys-off](runs/20261107-094430-cs-phys-off.md) | cs-phys-off | cheydinhal | chapel-square-noon | own | fix=on ini:NpcBodiesOneLock=0,ParallelStaticBodies=0,PhysAnimNoEmptyLock=0,PhysicsFlushParallel=0,PhysicsPushParallel=0,PhysicsTreeTimeSlicing=0,PipelinedBodyCreation=0 | 82.7 | 64.0 | 52.2 | 23.2 | 0 | 59 | 95 | ok |
 | [20261107-094647-cs-keep-off](runs/20261107-094647-cs-keep-off.md) | cs-keep-off | cheydinhal | chapel-square-noon | own | fix=on ini:GpuSceneKeepCapacity=0,LumenKeepArrayCapacity=0,OsPageCache=0,RtSceneBufferKeep=0,UploadMemoryKeep=0 | 0.0 | 17.5 | 13.3 | 37337300.0 | 96 | 66 | 88 | ok |
+| [20261107-095041-cs-ab3-1107-0950-off-r1](runs/20261107-095041-cs-ab3-1107-0950-off-r1.md) | cs-ab3-1107-0950-off-r1 | cheydinhal | chapel-square-noon | own | fix=off | 69.2 | 41.1 | 37.5 | 26.7 | 0 | 56 | 88 | ok |
+| [20261107-095305-cs-ab3-1107-0950-on-r1](runs/20261107-095305-cs-ab3-1107-0950-on-r1.md) | cs-ab3-1107-0950-on-r1 | cheydinhal | chapel-square-noon | own | fix=on ini:HitchLedger=1,HitchLedgerTickSplit=1 | 66.2 | 43.5 | 29.5 | 445.9 | 1 | 46 | 96 | ok |
+| [20261107-095534-cs-ab3-1107-0950-off-r2](runs/20261107-095534-cs-ab3-1107-0950-off-r2.md) | cs-ab3-1107-0950-off-r2 | cheydinhal | chapel-square-noon | own | fix=off | 64.4 | 55.7 | 49.9 | 23.6 | 0 | 48 | 98 | ok |
+| [20261107-095757-cs-ab3-1107-0950-on-r2](runs/20261107-095757-cs-ab3-1107-0950-on-r2.md) | cs-ab3-1107-0950-on-r2 | cheydinhal | chapel-square-noon | own | fix=on ini:HitchLedger=1,HitchLedgerTickSplit=1 | 70.0 | 58.3 | 54.1 | 18.8 | 0 | 52 | 98 | ok |
+| [20261107-100022-cs-ab3-1107-0950-off-r3](runs/20261107-100022-cs-ab3-1107-0950-off-r3.md) | cs-ab3-1107-0950-off-r3 | cheydinhal | chapel-square-noon | own | fix=off | 74.1 | 56.1 | 45.5 | 25.8 | 0 | 52 | 96 | ok |
+| [20261107-100245-cs-ab3-1107-0950-on-r3](runs/20261107-100245-cs-ab3-1107-0950-on-r3.md) | cs-ab3-1107-0950-on-r3 | cheydinhal | chapel-square-noon | own | fix=on ini:HitchLedger=1,HitchLedgerTickSplit=1 | 76.1 | 68.6 | 64.3 | 17.2 | 0 | 54 | 98 | ok |
