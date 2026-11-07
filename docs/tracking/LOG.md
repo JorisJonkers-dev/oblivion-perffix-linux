@@ -5,6 +5,32 @@ Investigations: [investigations.md](investigations.md).
 
 ## 2026-11-07
 
+### Owner rule change: slight image changes allowed for sufficient gains
+- Allowed only when the gain is at least about 5% fps, or clearly fewer hitches or better lows.
+- The visible difference must be minimal: SSIM against the base at the same headings, plus side-by-side images.
+- Every such change is an opt-in switch.
+- Spec stories 51–53 cover this. Tooling is in progress: `spin --shots` (branch `spin-ssim`) and a cvar candidate list
+  (`ideas/quality-cvars.md`).
+
+### Content modding: feasible but unproven; settings first
+Source: [../research-linux/ideas/content-modding.md](../research-linux/ideas/content-modding.md).
+
+- **Feasible:**
+  - mod packs load from `Content/Paks/~mods` (`.pak` + `.utoc` + `.ucas`);
+  - no signature check was found;
+  - the toolchain exists: retoc (MIT) for IoStore, UAssetAPI/UAssetGUI (MIT) for property edits, plus a `.usmap`.
+- **No precedent for gains:** no community mod shows a gain from property-edited meshes, foliage or shadows. The popular
+  performance mods are ini packs, measured as close to placebo. Upstream measured foliage and view distance as cheap on
+  the GPU.
+- **Plan:**
+  - Sweep cvars first.
+  - Do a time-boxed content probe (shadow casting off on small flora/clutter, A/B/A with SSIM) only if the cvar sweep
+    shows headroom in shadows or foliage.
+  - The probe needs the owner's OK to download retoc, UAssetGUI/UAssetAPI with .NET, and a `.usmap`. A hands-on spike
+    was blocked by the safety check for exactly that reason.
+- **Licence:** publish scripts that read the user's own install; never publish modified assets.
+
+
 ### OsPageCache, real gameplay trace (`dll3-gate-doors`, 326 s with 2 transitions): already near its ceiling. Closed
 - Live hit rate 64.1%. The ceiling for exact-size reuse (unbounded, never trimmed) is 71.0%.
 - Grid search, optimising for ms saved with the measured Wine miss costs:
