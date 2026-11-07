@@ -10,11 +10,12 @@ import math
 import re
 import shutil
 import signal
+import subprocess
 import threading
 import time
 from pathlib import Path
 
-from . import envfile, fixini, game, mangohud, scenario
+from . import detail, envfile, fixini, game, mangohud, scenario
 from .protocol import BenchError, Bridge, Deadline, GameDown, NeedsUser
 from .saves import SaveGuard
 from .ue4ss import Installer
@@ -61,6 +62,9 @@ class Options:
         self.run_dir = kw.get("run_dir")
         self.fix_ini = kw.get("fix_ini")                 # ["KEY=VAL,KEY=VAL", ...] for [Fixes], this run only
         self.env = kw.get("env")                         # ["KEY=VAL", ...] added to the launch environment
+        self.detail = bool(kw.get("detail"))             # grab the window after door arrivals: time-to-sharp
+        self.detail_secs = float(kw.get("detail_secs", 12))
+        self.detail_interval = float(kw.get("detail_interval", 0.5))
         self.diag = bool(kw.get("diag"))                 # HitchLedger + HitchLedgerTickSplit, copied into the run
         self.scenario_dir = kw.get("scenario_dir") or scenario.SCENARIO_DIR
 
@@ -106,6 +110,8 @@ class Runner:
         self.pin_counts = {}
         self.effective = {}
         self.cond = None
+        self.capturer = None
+        self.capture_fails = 0
 
     # ------------------------------------------------------------ output
 
@@ -125,6 +131,44 @@ class Runner:
             if left <= 0:
                 return
             time.sleep(min(0.25, left))
+
+    def capture_series(self, origin, secs):
+        """Grabs the game window every --detail-interval s until `secs` after `origin` (wall time); returns
+        [(t since origin, sharpness, mean luminance)] (samples that failed are left out)."""
+        if self.capturer is None:
+            self.capturer = detail.Capturer()
+        masks = self.scn.get("masks") or []
+        series, fails, nxt = [], 0, time.time()
+        while True:
+            now = time.time()
+            if now - origin >= secs:
+                break
+            if now < nxt:
+                self.wait(nxt - now)
+                continue
+            nxt = now + self.o.detail_interval
+            try:
+                frame = self.capturer.grab()
+                t = time.time() - origin
+                series.append((round(t, 3), detail.sharpness(frame, masks), detail.mean_luma(frame)))
+            except (detail.CaptureError, OSError, ValueError, subprocess.SubprocessError) as e:
+                fails += 1
+                if fails in (1, 5):
+                    self.warn(f"window capture failed ({fails}x): {e}")
+                if fails >= 5 and not series:
+                    break                                   # nothing works: stop trying in this window
+        self.capture_fails += fails
+        return series
+
+    def detail_result(self, seg_id, series):
+        d = detail.analyse(series)
+        d["detailSeries"] = [[t, None if s is None else round(s, 2), round(m, 1)] for t, s, m in series]
+        if d.get("detailBlack"):
+            self.warn(f"{seg_id}: the captured window was black (XWayland not drawing it?): no detail numbers")
+        elif "detailSettleS" not in d:
+            self.warn(f"{seg_id}: no detail result ({d.get('detailSamples', 0)} sample(s), "
+                      f"{len(series)} captured): the picture never settled or the capture failed")
+        return d
 
     def send(self, cmd, timeout=8.0, nothrow=False):
         return self.bridge.send(cmd, timeout=timeout, nothrow=nothrow)
@@ -265,7 +309,14 @@ class Runner:
         return scenes
 
     def estimate_seconds(self, scn, scenes):
-        return sum(scenario.scene_seconds(scn, s) for s in scenes)
+        extra = 0.0
+        if self.o.detail:
+            for s in scenes:
+                if s.get("type") == "door":
+                    extra += 2 * max(0.0, self.o.detail_secs - float(s.get("hold", scn["defaults"].get("hold", 12))))
+                elif s.get("detail"):
+                    extra += max(0.0, self.o.detail_secs - float(s.get("measure", scn["defaults"].get("measure", 20))))
+        return sum(scenario.scene_seconds(scn, s) for s in scenes) + extra
 
     def announce(self, scenes, estimate, fix_mode, limit_min):
         self.say(f"{len(scenes)} scene(s), about {estimate / 60:.0f} min of scenes, profile {self.profile_name}, "
@@ -804,10 +855,16 @@ class Runner:
         with self.static_setup(scene) as ai_held:
             self.wait(settle)
             t0 = time.time()
-            self.wait(float(scene.get("measure", self.scn["defaults"].get("measure", 20))))
+            measure = float(scene.get("measure", self.scn["defaults"].get("measure", 20)))
+            det = None
+            if self.o.detail and scene.get("detail"):
+                series = self.capture_series(t0, max(measure, self.o.detail_secs))
+                det = self.detail_result(scene["id"], series)
+            self.wait(max(0.0, measure - (time.time() - t0)))
             t1 = time.time()
             end = self.bridge.state()
-            self.add_segment({"id": scene["id"], "type": "static", "t0": t0, "t1": t1, "state": end, "aiHeld": ai_held})
+            self.add_segment({"id": scene["id"], "type": "static", "t0": t0, "t1": t1, "state": end, "aiHeld": ai_held,
+                              "detail": det})
             if end and (end.get("menu") == "1" or end.get("frozen") == "1"):
                 self.warn(f"{scene['id']}: a menu or conversation was open at the end of the scene "
                           f"(menu={end.get('menu')} frozen={end.get('frozen')}): its numbers measure the paused world")
@@ -871,13 +928,17 @@ class Runner:
             else:
                 self.warn(f"{scene['id']}/{leg}: no arrival detected")
                 ta = time.time()
-            self.wait(hold)
+            det = None
+            if self.o.detail and arr:
+                series = self.capture_series(ta, max(hold, self.o.detail_secs))
+                det = self.detail_result(f"{scene['id']}/{leg}", series)
+            self.wait(max(0.0, hold - (time.time() - ta)) if det is not None else hold)
             t1 = time.time()
             self.send("watch 0", nothrow=True)
             events = [f"{c:.2f} {txt}" for c, txt in self.bridge.events(pos)]
             self.add_segment({"id": f"{scene['id']}/{leg}", "type": "door", "t0": t0, "t1": t1, "tA": ta,
                               "arrived": bool(arr), "activationRetries": retries, "state": self.bridge.state(),
-                              "events": events})
+                              "events": events, "detail": det})
             if ft and arr:
                 for _ in range(3):
                     if (self.bridge.state() or {}).get("menu") != "1":
@@ -1109,6 +1170,8 @@ class Runner:
                 r.update({"arrived": seg["arrived"], "arriveSec": round(seg["tA"] - seg["t0"], 2),
                           "afterFps": after.get("fps"), "afterLow1": after.get("low1"),
                           "afterHitches": after.get("hitches"), "afterWorstMs": after.get("worstMs")})
+        if seg.get("detail"):
+            r.update(seg["detail"])
         for k in ("events", "cond", "activationRetries", "aiHeld"):
             if seg.get(k):
                 r[k] = seg[k]
