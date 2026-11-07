@@ -1,0 +1,1067 @@
+{
+ "diagFiles": null,
+ "dll": null,
+ "env": {
+  "MANGOHUD": "1",
+  "MANGOHUD_CONFIGFILE": "/home/ExtraToast/Projects/opf-run/linux/results/20261107-104901-vtdoor-1107-1038-Aon-r2/mangohud.conf",
+  "OBLV_BENCH_MARKER": "/home/ExtraToast/Projects/opf-run/run/launch-marker.txt",
+  "OBLV_GAME_ARGS": "-FixedSeed",
+  "WINEDLLOVERRIDES": "version=n,b;dwmapi=n,b"
+ },
+ "fix": "on",
+ "fixIniOverrides": null,
+ "label": "vtdoor-1107-1038-Aon-r2",
+ "loadSec": 50.9,
+ "outcome": "ok",
+ "profile": {
+  "description": "Your own settings as they are (resolution, window mode, upscaler, quality, frame cap): nothing is changed. Used by -Watch. Results depend on those settings, so say which ones you used when you share them",
+  "name": "own",
+  "own": true
+ },
+ "scenario": "cheydinhal",
+ "scenes": [
+  {
+   "afterFps": 128.9,
+   "afterHitches": 2,
+   "afterLow1": 71.1,
+   "afterWorstMs": 195.5,
+   "arriveSec": 3.27,
+   "arrived": true,
+   "avgMs": 9.3,
+   "cond": {
+    "atEnd": "hour=12.006 wx=Clear:1.00 npcs=2 near=BP_MarianaAncharia@578,-129;BP_Shelley@0,-0",
+    "atSet": "hour=12.000 wx=Clear:1.00",
+    "hour": "12",
+    "pinned": true,
+    "timescale": "1",
+    "weather": "Clear"
+   },
+   "cpuLoad": 38.4,
+   "detailAt1s": 0.019,
+   "detailAt2s": 0.165,
+   "detailAt4s": 0.988,
+   "detailFadeS": 0.64,
+   "detailFinal": 355.68,
+   "detailFinalMean": 50.2,
+   "detailSamples": 24,
+   "detailSeries": [
+    [
+     0.643,
+     657.2,
+     47.9
+    ],
+    [
+     0.861,
+     657.2,
+     47.9
+    ],
+    [
+     1.412,
+     6.85,
+     5.2
+    ],
+    [
+     1.89,
+     58.52,
+     19.8
+    ],
+    [
+     2.384,
+     58.52,
+     19.8
+    ],
+    [
+     2.89,
+     280.04,
+     45.3
+    ],
+    [
+     3.383,
+     280.04,
+     45.3
+    ],
+    [
+     3.891,
+     355.93,
+     50.6
+    ],
+    [
+     4.39,
+     351.3,
+     50.9
+    ],
+    [
+     4.881,
+     351.3,
+     50.9
+    ],
+    [
+     5.386,
+     341.71,
+     49.9
+    ],
+    [
+     5.887,
+     339.17,
+     49.3
+    ],
+    [
+     6.418,
+     361.83,
+     50.3
+    ],
+    [
+     6.909,
+     361.83,
+     50.3
+    ],
+    [
+     7.413,
+     343.79,
+     49.6
+    ],
+    [
+     7.905,
+     331.93,
+     49.3
+    ],
+    [
+     8.393,
+     337.73,
+     49.4
+    ],
+    [
+     8.895,
+     349.02,
+     50.3
+    ],
+    [
+     9.394,
+     363.39,
+     51.1
+    ],
+    [
+     9.897,
+     355.68,
+     50.2
+    ],
+    [
+     10.385,
+     355.68,
+     50.2
+    ],
+    [
+     10.895,
+     330.88,
+     48.8
+    ],
+    [
+     11.383,
+     330.88,
+     48.8
+    ],
+    [
+     11.894,
+     355.94,
+     50.5
+    ]
+   ],
+   "detailSettleS": 11.25,
+   "events": [
+    "147.67 level=L_CheydinhalWorld pawn=1 sub= grid=28,22 travel=0 tv=00 subloaded=1 menu=0 loadctx=1 frozen=0",
+    "147.79 level=L_CheydinhalWorld pawn=1 sub= grid=28,22 travel=0 tv=00 subloaded=1 menu=0 loadctx=1 frozen=1",
+    "148.35 level=L_CheydinhalWorld pawn=1 sub= grid=28,22 travel=0 tv=00 subloaded=1 menu=0 loadctx=1 frozen=0",
+    "150.24 level=L_CheydinhalWorld pawn=1 sub= grid=28,22 travel=1 tv=01 subloaded=1 menu=0 loadctx=1 frozen=0",
+    "150.57 level=L_SeamlessTransition pawn=1 sub= grid=28,22 travel=1 tv=01 subloaded=1 menu=0 loadctx=1 frozen=0",
+    "150.94 level=L_PersistentDungeon pawn=1 sub=L_CheydinhalBridgeInn grid=0,-1 travel=0 tv=00 subloaded=1 menu=0 loadctx=1 frozen=0 jump=147892 to=302,-379,-382"
+   ],
+   "fps": 107.5,
+   "frames": 1671,
+   "gpuLoad": 87.5,
+   "hitchMs": 2681.9,
+   "hitches": 7,
+   "hour": "12.01",
+   "id": "inn-door/enter",
+   "level": "L_PersistentDungeon",
+   "longestGapMs": 1851.1,
+   "low01": 3.3,
+   "low1": 62.8,
+   "over100": 4,
+   "over250": 2,
+   "over50": 6,
+   "p50Ms": 6.97,
+   "p95Ms": 13.19,
+   "p999Ms": 306.97,
+   "p99Ms": 15.92,
+   "seconds": 15.546,
+   "sub": "L_CheydinhalBridgeInn",
+   "type": "door",
+   "worstMs": 1851.1
+  },
+  {
+   "afterFps": 52.2,
+   "afterHitches": 5,
+   "afterLow1": 39.5,
+   "afterWorstMs": 1448.2,
+   "arriveSec": 2.79,
+   "arrived": true,
+   "avgMs": 11.83,
+   "cond": {
+    "atEnd": "hour=12.010 wx=Clear:1.00 npcs=8 near=BP_CheydinhalGuardCityPostNight01@114961,91790;BP_Shelley@116552,92052;BP_CheydinhalGuardCityPostDay01@114981,92221",
+    "atSet": "hour=12.000 wx=Clear:1.00",
+    "hour": "12",
+    "pinned": true,
+    "timescale": "1",
+    "weather": "Clear"
+   },
+   "cpuLoad": 46.5,
+   "detailAt1s": 1.124,
+   "detailAt2s": 1.092,
+   "detailAt4s": 0.999,
+   "detailFadeS": 4.42,
+   "detailFinal": 380.37,
+   "detailFinalMean": 92.9,
+   "detailSamples": 22,
+   "detailSeries": [
+    [
+     1.413,
+     355.94,
+     50.5
+    ],
+    [
+     1.865,
+     958.91,
+     47.1
+    ],
+    [
+     2.406,
+     3.75,
+     7.9
+    ],
+    [
+     2.923,
+     3.75,
+     7.9
+    ],
+    [
+     3.405,
+     138.22,
+     58.4
+    ],
+    [
+     3.904,
+     138.22,
+     58.4
+    ],
+    [
+     4.416,
+     513.51,
+     93.0
+    ],
+    [
+     4.91,
+     439.82,
+     91.2
+    ],
+    [
+     5.408,
+     427.54,
+     91.7
+    ],
+    [
+     5.915,
+     415.51,
+     91.8
+    ],
+    [
+     6.426,
+     399.28,
+     92.3
+    ],
+    [
+     6.908,
+     391.38,
+     92.9
+    ],
+    [
+     7.407,
+     410.73,
+     93.0
+    ],
+    [
+     7.921,
+     380.17,
+     92.9
+    ],
+    [
+     8.405,
+     379.95,
+     92.9
+    ],
+    [
+     8.91,
+     379.95,
+     92.9
+    ],
+    [
+     9.412,
+     380.37,
+     92.9
+    ],
+    [
+     9.9,
+     380.37,
+     92.9
+    ],
+    [
+     10.398,
+     380.37,
+     92.9
+    ],
+    [
+     10.877,
+     380.37,
+     92.9
+    ],
+    [
+     11.374,
+     381.52,
+     92.9
+    ],
+    [
+     11.883,
+     380.77,
+     92.8
+    ]
+   ],
+   "detailSettleS": 3.5,
+   "events": [
+    "165.00 level=L_PersistentDungeon pawn=1 sub=L_CheydinhalBridgeInn grid=0,-1 travel=0 tv=00 subloaded=1 menu=0 loadctx=1 frozen=0",
+    "165.11 level=L_PersistentDungeon pawn=1 sub=L_CheydinhalBridgeInn grid=0,-1 travel=0 tv=00 subloaded=1 menu=0 loadctx=1 frozen=1",
+    "165.63 level=L_PersistentDungeon pawn=1 sub=L_CheydinhalBridgeInn grid=0,-1 travel=0 tv=00 subloaded=1 menu=0 loadctx=1 frozen=0",
+    "165.79 level=L_PersistentDungeon pawn=1 sub=L_CheydinhalBridgeInn grid=0,-1 travel=1 tv=01 subloaded=1 menu=0 loadctx=1 frozen=0",
+    "165.95 level=L_SeamlessTransition pawn=1 sub= grid=0,-1 travel=1 tv=01 subloaded=1 menu=0 loadctx=1 frozen=0",
+    "167.80 level=L_CheydinhalWorld pawn=1 sub= grid=28,22 travel=0 tv=00 subloaded=1 menu=0 loadctx=1 frozen=0 jump=147891 to=115793,91681,7256"
+   ],
+   "fps": 84.5,
+   "frames": 1274,
+   "gpuLoad": 80.7,
+   "hitchMs": 2883.3,
+   "hitches": 7,
+   "hour": "12.01",
+   "id": "inn-door/exit",
+   "level": "L_CheydinhalWorld",
+   "longestGapMs": 1448.3,
+   "low01": 1.2,
+   "low1": 39.5,
+   "over100": 4,
+   "over250": 3,
+   "over50": 5,
+   "p50Ms": 14.33,
+   "p95Ms": 17.18,
+   "p999Ms": 848.0,
+   "p99Ms": 25.28,
+   "seconds": 15.072,
+   "sub": "",
+   "type": "door",
+   "worstMs": 1448.2
+  },
+  {
+   "afterFps": 119.2,
+   "afterHitches": 2,
+   "afterLow1": 71.6,
+   "afterWorstMs": 174.1,
+   "arriveSec": 3.19,
+   "arrived": true,
+   "avgMs": 10.11,
+   "cond": {
+    "atEnd": "hour=12.007 wx=Clear:1.00 npcs=1 near=BP_GruiandGarrana@153,-165",
+    "atSet": "hour=12.000 wx=Clear:1.00",
+    "flipped": 1,
+    "hour": "12",
+    "pinned": true,
+    "timescale": "1",
+    "weather": "Clear"
+   },
+   "cpuLoad": 26.6,
+   "detailAt1s": 0.896,
+   "detailAt2s": 0.9,
+   "detailAt4s": 0.953,
+   "detailFadeS": 3.38,
+   "detailFinal": 307.51,
+   "detailFinalMean": 54.0,
+   "detailSamples": 24,
+   "detailSeries": [
+    [
+     0.38,
+     1084.08,
+     44.3
+    ],
+    [
+     0.872,
+     0.0,
+     0.1
+    ],
+    [
+     1.382,
+     7.42,
+     7.9
+    ],
+    [
+     1.872,
+     7.42,
+     7.9
+    ],
+    [
+     2.372,
+     7.42,
+     7.9
+    ],
+    [
+     2.873,
+     7.42,
+     7.9
+    ],
+    [
+     3.382,
+     277.77,
+     53.9
+    ],
+    [
+     3.874,
+     277.77,
+     53.9
+    ],
+    [
+     4.38,
+     275.49,
+     53.8
+    ],
+    [
+     4.871,
+     275.49,
+     53.8
+    ],
+    [
+     5.381,
+     276.82,
+     53.9
+    ],
+    [
+     5.885,
+     275.96,
+     53.9
+    ],
+    [
+     6.375,
+     275.96,
+     53.9
+    ],
+    [
+     6.884,
+     292.93,
+     53.9
+    ],
+    [
+     7.373,
+     292.93,
+     53.9
+    ],
+    [
+     7.882,
+     310.22,
+     53.9
+    ],
+    [
+     8.375,
+     308.77,
+     54.0
+    ],
+    [
+     8.873,
+     308.77,
+     54.0
+    ],
+    [
+     9.381,
+     309.61,
+     53.9
+    ],
+    [
+     9.886,
+     307.51,
+     54.0
+    ],
+    [
+     10.375,
+     307.51,
+     54.0
+    ],
+    [
+     10.882,
+     306.92,
+     53.9
+    ],
+    [
+     11.382,
+     309.9,
+     54.0
+    ],
+    [
+     11.884,
+     309.31,
+     53.9
+    ]
+   ],
+   "detailSettleS": 4.5,
+   "events": [
+    "192.05 level=L_CheydinhalWorld pawn=1 sub= grid=29,22 travel=0 tv=00 subloaded=1 menu=0 loadctx=1 frozen=0",
+    "192.17 level=L_CheydinhalWorld pawn=1 sub= grid=29,22 travel=0 tv=00 subloaded=1 menu=0 loadctx=1 frozen=1",
+    "192.73 level=L_CheydinhalWorld pawn=1 sub= grid=29,22 travel=0 tv=00 subloaded=1 menu=0 loadctx=1 frozen=0",
+    "194.47 level=L_CheydinhalWorld pawn=1 sub= grid=29,22 travel=1 tv=01 subloaded=1 menu=0 loadctx=1 frozen=0",
+    "194.73 level=L_SeamlessTransition pawn=1 sub= grid=29,22 travel=1 tv=01 subloaded=1 menu=0 loadctx=1 frozen=0",
+    "195.24 level=L_PersistentDungeon pawn=1 sub=L_CheydinhalChapelOfArkay grid=-1,-1 travel=0 tv=00 subloaded=1 menu=0 loadctx=1 frozen=0 jump=153597 to=-877,-5,-530"
+   ],
+   "fps": 98.9,
+   "frames": 1531,
+   "gpuLoad": 81.6,
+   "hitchMs": 2668.6,
+   "hitches": 6,
+   "hour": "12.01",
+   "id": "chapel-door/enter",
+   "level": "L_PersistentDungeon",
+   "longestGapMs": 1723.5,
+   "low01": 2.0,
+   "low1": 53.8,
+   "over100": 4,
+   "over250": 2,
+   "over50": 5,
+   "p50Ms": 8.48,
+   "p95Ms": 13.56,
+   "p999Ms": 497.29,
+   "p99Ms": 18.6,
+   "seconds": 15.487,
+   "sub": "L_CheydinhalChapelOfArkay",
+   "type": "door",
+   "worstMs": 1723.5
+  },
+  {
+   "afterFps": 67.9,
+   "afterHitches": 6,
+   "afterLow1": 44.8,
+   "afterWorstMs": 1557.9,
+   "arriveSec": 3.04,
+   "arrived": true,
+   "avgMs": 9.05,
+   "cond": {
+    "atEnd": "hour=12.015 wx=Clear:1.00 npcs=4 near=BP_MS10CheydinhalHouseGuard01@122863,89512;BP_CheydinhalGuardCityPatrolNight01@123707,89529;BP_CheydinhalGuardCityPatrolNight02@122082,88052",
+    "atSet": "hour=12.000 wx=Clear:1.00",
+    "flipped": 1,
+    "hour": "12",
+    "pinned": true,
+    "timescale": "1",
+    "weather": "Clear"
+   },
+   "cpuLoad": 43.9,
+   "detailAt1s": 1.037,
+   "detailAt2s": 1.024,
+   "detailAt4s": 1.009,
+   "detailFadeS": 4.49,
+   "detailFinal": 1244.91,
+   "detailFinalMean": 120.4,
+   "detailSamples": 23,
+   "detailSeries": [
+    [
+     0.992,
+     740.77,
+     47.8
+    ],
+    [
+     1.467,
+     740.77,
+     47.8
+    ],
+    [
+     1.996,
+     7.16,
+     8.2
+    ],
+    [
+     2.493,
+     132.09,
+     38.6
+    ],
+    [
+     2.986,
+     478.67,
+     73.2
+    ],
+    [
+     3.482,
+     977.84,
+     105.2
+    ],
+    [
+     3.983,
+     977.84,
+     105.2
+    ],
+    [
+     4.488,
+     1299.39,
+     120.1
+    ],
+    [
+     4.986,
+     1295.95,
+     119.7
+    ],
+    [
+     5.488,
+     1290.84,
+     119.3
+    ],
+    [
+     5.994,
+     1283.65,
+     119.2
+    ],
+    [
+     6.488,
+     1274.67,
+     119.0
+    ],
+    [
+     6.993,
+     1278.07,
+     119.0
+    ],
+    [
+     7.487,
+     1262.84,
+     119.2
+    ],
+    [
+     8.002,
+     1256.67,
+     119.5
+    ],
+    [
+     8.496,
+     1246.31,
+     119.7
+    ],
+    [
+     8.993,
+     1238.54,
+     119.8
+    ],
+    [
+     9.492,
+     1238.54,
+     119.8
+    ],
+    [
+     9.99,
+     1238.54,
+     119.8
+    ],
+    [
+     10.498,
+     1244.91,
+     120.4
+    ],
+    [
+     10.986,
+     1244.91,
+     120.4
+    ],
+    [
+     11.484,
+     1244.91,
+     120.4
+    ],
+    [
+     11.985,
+     1244.91,
+     120.4
+    ]
+   ],
+   "detailSettleS": 2.0,
+   "events": [
+    "223.74 level=L_PersistentDungeon pawn=1 sub=L_CheydinhalChapelOfArkay grid=-1,-1 travel=0 tv=00 subloaded=1 menu=0 loadctx=1 frozen=0",
+    "223.85 level=L_PersistentDungeon pawn=1 sub=L_CheydinhalChapelOfArkay grid=-1,-1 travel=0 tv=00 subloaded=1 menu=0 loadctx=1 frozen=1",
+    "224.38 level=L_PersistentDungeon pawn=1 sub=L_CheydinhalChapelOfArkay grid=-1,-1 travel=0 tv=00 subloaded=1 menu=0 loadctx=1 frozen=0",
+    "224.46 level=L_PersistentDungeon pawn=1 sub=L_CheydinhalChapelOfArkay grid=-1,-1 travel=1 tv=01 subloaded=1 menu=0 loadctx=1 frozen=0",
+    "224.78 level=L_SeamlessTransition pawn=1 sub= grid=-1,-1 travel=1 tv=01 subloaded=1 menu=0 loadctx=1 frozen=0",
+    "226.79 level=L_CheydinhalWorld pawn=1 sub= grid=29,22 travel=0 tv=00 subloaded=1 menu=0 loadctx=1 frozen=0 jump=153597 to=122803,90733,7341"
+   ],
+   "fps": 110.5,
+   "frames": 1664,
+   "gpuLoad": 85.0,
+   "hitchMs": 2650.3,
+   "hitches": 7,
+   "hour": "12.01",
+   "id": "chapel-door/exit",
+   "level": "L_CheydinhalWorld",
+   "longestGapMs": 1557.9,
+   "low01": 1.7,
+   "low1": 45.6,
+   "over100": 4,
+   "over250": 3,
+   "over50": 5,
+   "p50Ms": 10.51,
+   "p95Ms": 13.97,
+   "p999Ms": 602.65,
+   "p99Ms": 21.95,
+   "seconds": 15.069,
+   "sub": "",
+   "type": "door",
+   "worstMs": 1557.9
+  },
+  {
+   "afterFps": 42.4,
+   "afterHitches": 6,
+   "afterLow1": 20.7,
+   "afterWorstMs": 2757.1,
+   "arriveSec": 4.42,
+   "arrived": true,
+   "avgMs": 11.39,
+   "cond": {
+    "atEnd": "hour=12.006 wx=Clear:0.99,Cloudy:0.01 npcs=2 near=BP_CheydinhalGuardCityPostNight03@114498,92046;BP_MivrynaArano@111667,91617",
+    "atSet": "hour=12.000 wx=Clear:1.00",
+    "flipped": 1,
+    "hour": "12",
+    "pinned": true,
+    "timescale": "1",
+    "weather": "Clear"
+   },
+   "cpuLoad": 28.9,
+   "detailAt1s": 1.005,
+   "detailAt2s": 1.004,
+   "detailAt4s": 1.001,
+   "detailFadeS": 4.07,
+   "detailFinal": 1695.32,
+   "detailFinalMean": 125.2,
+   "detailSamples": 22,
+   "detailSeries": [
+    [
+     1.58,
+     719.6,
+     46.1
+    ],
+    [
+     2.058,
+     719.6,
+     46.1
+    ],
+    [
+     2.567,
+     719.6,
+     46.1
+    ],
+    [
+     3.067,
+     719.6,
+     46.1
+    ],
+    [
+     3.579,
+     790.67,
+     84.3
+    ],
+    [
+     4.071,
+     1440.86,
+     114.1
+    ],
+    [
+     4.574,
+     1703.47,
+     124.6
+    ],
+    [
+     5.059,
+     1703.47,
+     124.6
+    ],
+    [
+     5.576,
+     1702.35,
+     124.9
+    ],
+    [
+     6.078,
+     1702.68,
+     124.9
+    ],
+    [
+     6.572,
+     1701.86,
+     125.0
+    ],
+    [
+     7.059,
+     1701.86,
+     125.0
+    ],
+    [
+     7.576,
+     1696.41,
+     125.1
+    ],
+    [
+     8.076,
+     1697.69,
+     125.1
+    ],
+    [
+     8.579,
+     1694.4,
+     125.1
+    ],
+    [
+     9.078,
+     1693.61,
+     125.1
+    ],
+    [
+     9.573,
+     1689.67,
+     125.1
+    ],
+    [
+     10.072,
+     1690.34,
+     125.1
+    ],
+    [
+     10.573,
+     1693.82,
+     125.1
+    ],
+    [
+     11.068,
+     1695.25,
+     125.1
+    ],
+    [
+     11.563,
+     1695.4,
+     125.2
+    ],
+    [
+     12.078,
+     1699.27,
+     125.2
+    ]
+   ],
+   "detailSettleS": 0.5,
+   "events": [
+    "250.75 level=L_CheydinhalWorld pawn=1 sub= grid=28,22 travel=0 tv=00 subloaded=1 menu=0 loadctx=1 frozen=0",
+    "250.85 level=L_CheydinhalWorld pawn=1 sub= grid=28,22 travel=0 tv=00 subloaded=1 menu=0 loadctx=1 frozen=1",
+    "251.41 level=L_CheydinhalWorld pawn=1 sub= grid=28,22 travel=0 tv=00 subloaded=1 menu=0 loadctx=1 frozen=0",
+    "252.01 level=L_CheydinhalWorld pawn=1 sub= grid=28,22 travel=1 tv=01 subloaded=1 menu=0 loadctx=1 frozen=0",
+    "252.39 level=L_SeamlessTransition pawn=1 sub= grid=28,22 travel=1 tv=01 subloaded=1 menu=0 loadctx=1 frozen=0",
+    "255.18 level=L_Tamriel pawn=1 sub= grid=27,22 travel=0 tv=00 subloaded=1 menu=0 loadctx=1 frozen=0"
+   ],
+   "fps": 87.8,
+   "frames": 1451,
+   "gpuLoad": 59.0,
+   "hitchMs": 4562.5,
+   "hitches": 10,
+   "hour": "12.01",
+   "id": "west-gate/enter",
+   "level": "L_Tamriel",
+   "longestGapMs": 2757.1,
+   "low01": 1.8,
+   "low1": 44.4,
+   "over100": 5,
+   "over250": 4,
+   "over50": 8,
+   "p50Ms": 3.55,
+   "p95Ms": 18.62,
+   "p999Ms": 542.25,
+   "p99Ms": 22.5,
+   "seconds": 16.537,
+   "sub": "",
+   "type": "door",
+   "worstMs": 2757.1
+  },
+  {
+   "afterFps": 47.2,
+   "afterHitches": 6,
+   "afterLow1": 36.1,
+   "afterWorstMs": 1516.8,
+   "arriveSec": 4.04,
+   "arrived": true,
+   "avgMs": 13.86,
+   "cond": {
+    "atEnd": "hour=12.010 wx=Clear:0.97,Cloudy:0.03 npcs=2 near=BP_CheydinhalGuardCityPostDay01@114981,92221;BP_CheydinhalGuardCityPostNight01@114961,91790",
+    "atSet": "hour=12.000 wx=Clear:1.00",
+    "flipped": 1,
+    "hour": "12",
+    "pinned": true,
+    "timescale": "1",
+    "weather": "Clear"
+   },
+   "cpuLoad": 38.4,
+   "detailAt1s": 0.987,
+   "detailAt2s": 0.989,
+   "detailAt4s": 0.998,
+   "detailFadeS": 4.31,
+   "detailFinal": 1148.36,
+   "detailFinalMean": 125.7,
+   "detailSamples": 22,
+   "detailSeries": [
+    [
+     1.303,
+     1024.47,
+     44.7
+    ],
+    [
+     1.772,
+     1024.47,
+     44.7
+    ],
+    [
+     2.314,
+     10.04,
+     10.4
+    ],
+    [
+     2.8,
+     122.51,
+     40.2
+    ],
+    [
+     3.307,
+     430.16,
+     79.6
+    ],
+    [
+     3.799,
+     859.22,
+     109.8
+    ],
+    [
+     4.309,
+     1121.6,
+     125.6
+    ],
+    [
+     4.808,
+     1132.92,
+     125.6
+    ],
+    [
+     5.306,
+     1132.94,
+     125.4
+    ],
+    [
+     5.805,
+     1136.68,
+     125.1
+    ],
+    [
+     6.298,
+     1135.98,
+     124.7
+    ],
+    [
+     6.794,
+     1135.98,
+     124.7
+    ],
+    [
+     7.3,
+     1147.24,
+     124.6
+    ],
+    [
+     7.8,
+     1145.25,
+     124.8
+    ],
+    [
+     8.3,
+     1145.86,
+     125.0
+    ],
+    [
+     8.797,
+     1146.81,
+     125.2
+    ],
+    [
+     9.299,
+     1147.57,
+     125.4
+    ],
+    [
+     9.805,
+     1151.03,
+     125.6
+    ],
+    [
+     10.297,
+     1145.52,
+     125.6
+    ],
+    [
+     10.799,
+     1148.36,
+     125.7
+    ],
+    [
+     11.293,
+     1148.36,
+     125.7
+    ],
+    [
+     11.797,
+     1148.36,
+     125.7
+    ]
+   ],
+   "detailSettleS": 0.0,
+   "events": [
+    "269.07 level=L_Tamriel pawn=1 sub= grid=27,22 travel=0 tv=00 subloaded=1 menu=0 loadctx=1 frozen=0",
+    "269.18 level=L_Tamriel pawn=1 sub= grid=27,22 travel=0 tv=00 subloaded=1 menu=0 loadctx=1 frozen=1",
+    "269.72 level=L_Tamriel pawn=1 sub= grid=27,22 travel=0 tv=00 subloaded=1 menu=0 loadctx=1 frozen=0",
+    "270.56 level=L_Tamriel pawn=1 sub= grid=27,22 travel=1 tv=01 subloaded=1 menu=0 loadctx=1 frozen=0",
+    "271.08 level=L_SeamlessTransition pawn=1 sub= grid=27,22 travel=1 tv=01 subloaded=1 menu=0 loadctx=1 frozen=0",
+    "273.11 level=L_CheydinhalWorld pawn=1 sub= grid=28,22 travel=0 tv=00 subloaded=1 menu=0 loadctx=1 frozen=0"
+   ],
+   "fps": 72.2,
+   "frames": 1171,
+   "gpuLoad": 58.6,
+   "hitchMs": 4084.1,
+   "hitches": 9,
+   "hour": "12.01",
+   "id": "west-gate/exit",
+   "level": "L_CheydinhalWorld",
+   "longestGapMs": 1516.8,
+   "low01": 1.2,
+   "low1": 37.7,
+   "over100": 6,
+   "over250": 6,
+   "over50": 8,
+   "p50Ms": 16.08,
+   "p95Ms": 18.42,
+   "p999Ms": 815.09,
+   "p99Ms": 26.53,
+   "seconds": 16.238,
+   "sub": "",
+   "type": "door",
+   "worstMs": 1516.8
+  }
+ ],
+ "start": "fresh",
+ "time": "2026-11-07 10:49:01",
+ "warnings": [
+  "west-gate/enter: the weather changed during the scene (Clear:1.00 -> Clear:0.99,Cloudy:0.01) although pinned",
+  "west-gate/exit: the weather changed during the scene (Clear:1.00 -> Clear:0.97,Cloudy:0.03) although pinned"
+ ]
+}

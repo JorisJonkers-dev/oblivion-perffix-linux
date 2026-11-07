@@ -5,6 +5,26 @@ Investigations: [investigations.md](investigations.md).
 
 ## 2026-11-07
 
+### Door test of `VtStreamingUploads=64` + `FadeVtFlushSkip=1` with detail arrival (3+3 runs): inconclusive
+Report: [runs/20261107-111019-vtdoor.md](runs/20261107-111019-vtdoor.md). The detail capture (xwd through XWayland) works live.
+
+| Door | Sharp after (s) | Sharpness at 1 s |
+|---|---|---|
+| Inn, entering | 7.9 → 8.1 | 0.03 → 0.97 |
+| Inn, leaving | 3.5 → 4.1 | ~ |
+| Chapel, entering | 4.5 → 0.5 | 0.90 → 1.00 |
+| Chapel, leaving | 2.5 → 5.5 | ~ |
+| West gate, leaving | 0.0 → 3.5 | ~ (at 2 s: 0.99 → 0.06) |
+
+- Interior entries look clearly better with the switches; exits are mixed.
+- FPS is mixed: inn entry −13%, the rest within noise.
+- **Problem with the metric:** Laplacian variance falls with brightness, so the fade-in tail and eye adaptation read as
+  blur. The 0.03 and 0.06 values are almost certainly dark frames, not blurry ones.
+- Fix needed: normalise sharpness by luminance (or use gradient energy over mean luminance), and start timing only once
+  the brightness is stable.
+- Not adopted yet.
+
+
 ### Run-log analysis (Haiku): the runner's own sync stalls polluted the ledgers
 Source: [../research-linux/ideas/run-log-analysis.md](../research-linux/ideas/run-log-analysis.md).
 
