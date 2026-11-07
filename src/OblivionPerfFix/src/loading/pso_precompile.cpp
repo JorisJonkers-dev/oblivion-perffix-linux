@@ -127,6 +127,15 @@ std::atomic<int64_t> g_maxQueue{0};     // the largest queue seen during this pr
 std::atomic<const char*> g_coldWhy{""}; // which guard tripped (monitor or game thread writes, the stats line reads)
 uint64_t g_fastMaxMs = kFastMaxMs;      // the faster pace's limit per precompile (the self-test shortens it)
 uint64_t g_fastAtStart = 0;             // game thread: g_fastMs when this precompile started (the limit is per precompile)
+// PsoColdGuardWine: under Wine the driver's compile threads cannot be seen (Mesa's threads are Linux threads; Wine's thread
+// list holds only Windows threads), so the guard also watches UE's queue: a queue of at least kTrendMinQueue that has not
+// fallen by 5 % in any of kTrendSeconds seconds in a row means the pipelines arrive faster than they are compiled.
+// (A warm cache's queue peaked at 86-120 in the run logs; the cold-cache queue limit is PsoPrecompileColdQueue = 1000.)
+std::atomic<bool> g_coldGuardWine{true};
+constexpr int64_t kTrendMinQueue = 250;
+constexpr int kTrendSeconds = 6;
+int64_t g_trendLast = -1;
+int g_trendRun = 0;
 // the driver's compile threads (monitor thread only)
 constexpr int kMaxDriverThreads = 32;
 constexpr int kDriverSearches = 3;      // empty searches per precompile before the driver-thread guard gives up
@@ -404,6 +413,21 @@ void DriverBusy(double cores)
     if (g_drvBusySeconds >= 2 && g_coldQueue.load() > 0)
         MarkCold(Now(), "driver threads: the graphics driver compiles shaders on its background threads (a cold shader cache)",
                  g_active ? static_cast<long long>(*g_active) : -1);
+}
+
+// One second's reading of UE's queue (monitor thread, or the self-test). Only meaningful while precompiling and not yet cold.
+void QueueTrend(int64_t queued)
+{
+    if (queued < kTrendMinQueue) {
+        g_trendRun = 0;
+        g_trendLast = -1;
+        return;
+    }
+    g_trendRun = (g_trendLast >= 0 && queued >= g_trendLast - g_trendLast / 20) ? g_trendRun + 1 : 0;   // not draining
+    g_trendLast = queued;
+    if (g_trendRun >= kTrendSeconds && g_coldQueue.load() > 0)
+        MarkCold(Now(), "queue trend (Wine): the queue holds hundreds of pipelines and is not draining (a cold shader cache)",
+                 static_cast<long long>(queued));
 }
 
 using GetThreadDescriptionFn = HRESULT(WINAPI*)(HANDLE, PWSTR*);
@@ -745,11 +769,14 @@ void PsoPrecompileWatchDriver()
     if (!g_fn) return;
     const bool precompiling = Precompiling();
     if (!precompiling || g_cold.load() || g_coldQueue.load() <= 0) {
+        g_trendRun = 0;
+        g_trendLast = -1;
         if (g_drvCount) ForgetDriverThreads();
         g_drvBusySeconds = 0;
         if (!precompiling) ResetDriverSearch();
         return;
     }
+    if (IsWine() && g_coldGuardWine.load() && g_active) QueueTrend(*g_active);
     const ULONGLONG now = GetTickCount64();
     const bool due = !g_drvSearchAt || now - g_drvSearchAt >= g_drvRetryMs;
     if (due && (g_drvCount ? AnyDriverThreadExited() : !g_drvGaveUp)) {
@@ -772,7 +799,8 @@ void PsoPrecompileWatchDriver()
             if (!g_drvLoggedNone) {
                 g_drvLoggedNone = true;
                 Log("[pso] +%.1f s: no driver compile threads found (%d searches, %.1f ms each): the driver-thread guard is off "
-                      "for this precompile; the queue and 60 s limits still apply", Now() / 1000.0, g_drvSearches, g_drvSearchMs);
+                      "for this precompile; the queue%s and 60 s limits still apply", Now() / 1000.0, g_drvSearches, g_drvSearchMs,
+                      IsWine() && g_coldGuardWine.load() ? " (with PsoColdGuardWine: whether it drains)" : "");
             }
         }
     }
@@ -785,6 +813,8 @@ void PsoPrecompileWatchDriver()
 }
 
 void PsoPrecompileTestDriverBusy(double cores) { DriverBusy(cores); }
+void PsoPrecompileTestQueueTrend(int64_t queued) { QueueTrend(queued); }
+void SetPsoColdGuardWine(bool on) { g_coldGuardWine = on; }
 
 int PsoPrecompileTestOwnThreads(uint32_t* mainThread)
 {
@@ -902,6 +932,9 @@ void PsoPrecompileTestOriginal(void* fakeSetBatchMode)
     g_appliedBudget = 0.0f;
     g_budgetMs = 4.0f;
     g_coldQueue = 1000;
+    g_coldGuardWine = true;
+    g_trendRun = 0;
+    g_trendLast = -1;
     g_fastMaxMs = kFastMaxMs;
     g_drvRetryMs = 10000;
     ForgetDriverThreads();

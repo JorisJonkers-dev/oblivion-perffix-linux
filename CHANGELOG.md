@@ -9,6 +9,21 @@ Downloads, checksums and build attestations: https://github.com/LTSharpe/Oblivio
 Bug fixes say whose bug it was: **game bug** = also happens without OblivionPerfFix (in the game, its engine or a
 driver library); **our bug** = caused by an earlier version of OblivionPerfFix.
 
+## Unreleased
+Proton / Wine awareness (the game always runs under Proton on Linux; `IsWine()` is the one place that tells).
+
+- **`PsoColdGuardWine`** (new, 1): under Wine the cold-cache guard of `PsoPrecompileFast` never worked, because the
+  driver's compile threads are not visible there ("no driver compile threads found" every run). It now also watches
+  whether UE's pipeline queue drains (at least 250 waiting and no 5% fall in 6 seconds in a row = a slow, cold-cache
+  build) and keeps the game's pace then. No effect on Windows. A guess to be confirmed on a cold shader cache; 0 = off.
+- **`OsPageCacheMB`, `OsPageCacheKeepMs`** (new in the ini; defaults unchanged, 64 MB and 5 s): tune the spare-block
+  cache; the log prints hits and misses per block size. Proton runs showed only 17-44% hits.
+- **`SharedMemoryGpuWine`** (new, 1): under Wine the GPU's memory kind is now asked too, so `SharedMemoryGpu=2` applies
+  to a Steam Deck or an APU on Linux. A discrete card answers "not UMA": no change. 0 = the old skip under Wine.
+- **The ini is parsed only when it changed** (always on): the monitor thread compares the file's size and last-write
+  time once a second instead of re-reading about 114 keys (a wineserver round trip each under Wine). Live switching still
+  takes about a second.
+
 ## 1.2.4-beta
 For Oblivion Remastered, Steam build 19115871 (Game Pass experimental). Thanks to Mishu117 for pull requests #33, #34,
 #35 and #36, to mkusm for pull request #31, to solir2 for the ROG Ally report, and to everyone who reported results and
