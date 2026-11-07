@@ -213,7 +213,8 @@ class Runner:
             marker = p.runtime / "launch-marker.txt"
             marker.unlink(missing_ok=True)
             env = envfile.build_env(fix_mode, mh_conf, ue4ss=True,
-                                    game_args=("-FixedSeed",) if o.fixed_seed else (), marker=marker)
+                                    game_args=("-FixedSeed",) if o.fixed_seed else (), marker=marker,
+                                    extra=envfile.parse_env(getattr(o, "env", None)))
             envfile.write_env(p.env_file, env, ttl=o.launch_timeout + 60)
             self.result["env"] = env
             watcher.start()

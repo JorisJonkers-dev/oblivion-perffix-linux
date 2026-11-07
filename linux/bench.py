@@ -156,6 +156,8 @@ def add_run_args(p):
     p.add_argument("--max-minutes", type=float, default=0, help="time limit of one run (0: from the scene estimate)")
     p.add_argument("--fix-ini", action="append", metavar="KEY=VAL[,KEY=VAL]",
                    help="set [Fixes] keys in OblivionPerfFix.ini for this run only (restored afterwards)")
+    p.add_argument("--env", action="append", metavar="KEY=VAL",
+                   help="extra environment (repeat the flag for more) for this launch, e.g. VKD3D_CONFIG=no_upload_hvv")
     p.add_argument("--diag", action="store_true",
                    help="engine diagnostics: HitchLedger + HitchLedgerTickSplit, copied and ranked into the run folder")
     p.add_argument("--launch-timeout", type=float, default=240)

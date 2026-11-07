@@ -102,3 +102,21 @@ class LaunchScriptTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExtraEnvTest(unittest.TestCase):
+    def test_extra_added_and_guarded(self):
+        from oblvbench import envfile as ef
+        env = ef.build_env("on", extra={"VKD3D_CONFIG": "no_upload_hvv"})
+        self.assertEqual(env["VKD3D_CONFIG"], "no_upload_hvv")
+        with self.assertRaises(ValueError):
+            ef.build_env("on", extra={"WINEDLLOVERRIDES": "x"})
+        with self.assertRaises(ValueError):
+            ef.build_env("on", extra={"BAD NAME": "1"})
+
+    def test_parse_env_keeps_commas(self):
+        from oblvbench import envfile as ef
+        self.assertEqual(ef.parse_env(["VKD3D_CONFIG=no_upload_hvv,nodxr", "A=1"]),
+                         {"VKD3D_CONFIG": "no_upload_hvv,nodxr", "A": "1"})
+        with self.assertRaises(ValueError):
+            ef.parse_env(["novalue"])

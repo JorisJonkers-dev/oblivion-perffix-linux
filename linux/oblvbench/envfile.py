@@ -22,7 +22,19 @@ def dll_overrides(fix_mode, ue4ss=True):
     return ";".join(parts)
 
 
-def build_env(fix_mode, mangohud_config=None, ue4ss=True, game_args=("-FixedSeed",), marker=None):
+def parse_env(items):
+    """['VKD3D_CONFIG=a,b', 'X=1'] -> dict. One KEY=VAL per item: values may contain commas."""
+    out = {}
+    for item in items or []:
+        k, sep, v = item.partition("=")
+        if not sep or not k.strip():
+            raise ValueError(f"expected KEY=VALUE, got {item!r}")
+        out[k.strip()] = v
+    return out
+
+
+def build_env(fix_mode, mangohud_config=None, ue4ss=True, game_args=("-FixedSeed",), marker=None, extra=None):
+    """extra: more variables for this launch (e.g. VKD3D_CONFIG); they cannot replace the benchmark's own."""
     env = {"WINEDLLOVERRIDES": dll_overrides(fix_mode, ue4ss)}
     if mangohud_config:
         env["MANGOHUD"] = "1"
@@ -31,6 +43,12 @@ def build_env(fix_mode, mangohud_config=None, ue4ss=True, game_args=("-FixedSeed
         env["OBLV_GAME_ARGS"] = " ".join(game_args)
     if marker:
         env["OBLV_BENCH_MARKER"] = str(marker)
+    for k, v in (extra or {}).items():
+        if k in env:
+            raise ValueError(f"--env cannot set {k}: the benchmark sets it")
+        if not k.replace("_", "").isalnum() or k[0].isdigit():
+            raise ValueError(f"not a variable name: {k!r}")
+        env[k] = str(v)
     return env
 
 
