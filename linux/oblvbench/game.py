@@ -1,12 +1,14 @@
 """The game process under Proton: launch through Steam, find, watch, stop."""
 import os
+import re
 import signal
 import subprocess
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
-from .paths import APP_ID, GAME_PGREP
+from .paths import APP_ID, GAME_PGREP, GAME_PROCESS
 from .protocol import Deadline, GameDown
 
 
@@ -90,6 +92,136 @@ def wait_gone(pid, timeout):
             return True
         time.sleep(0.25)
     return False
+
+
+# ------------------------------------------------------------ leftovers of an earlier session
+
+STEAM_CONSOLE_LOG = Path("~/.local/share/Steam/logs/console_log.txt").expanduser()
+CRASH_REPORTER = "CrashReportClient"
+REAPER_RE = re.compile(r"\breaper\b.*\bSteamLaunch\b")
+
+
+class LiveGameError(RuntimeError):
+    """The game is still running: the leftovers are left alone."""
+
+
+@dataclass
+class Leftover:
+    pid: int
+    role: str        # game | crash-reporter | reaper | helper
+    cmd: str
+
+
+def list_pids():
+    try:
+        return [int(d) for d in os.listdir("/proc") if d.isdigit()]
+    except OSError:
+        return []
+
+
+def proc_environ(pid):
+    """The environment a process started with, or None when it cannot be read."""
+    try:
+        raw = Path(f"/proc/{pid}/environ").read_bytes()
+    except OSError:
+        return None
+    env = {}
+    for item in raw.split(b"\0"):
+        k, sep, v = item.partition(b"=")
+        if sep:
+            env[k.decode(errors="replace")] = v.decode(errors="replace")
+    return env
+
+
+def _role(cmd, env_match, app_id):
+    if GAME_PROCESS in cmd:
+        return "game"
+    if CRASH_REPORTER in cmd:
+        return "crash-reporter"
+    if REAPER_RE.search(cmd) and f"AppId={app_id}" in cmd:
+        return "reaper"
+    return "helper" if env_match else None
+
+
+def find_leftovers(app_id=APP_ID):
+    """Processes of this game's Proton session: those started with SteamGameId / SteamAppId = app_id, and Steam's
+    reaper for the app (it may not carry the variables). Read only."""
+    found = []
+    for pid in list_pids():
+        env = proc_environ(pid)
+        env_match = bool(env) and (env.get("SteamGameId") == str(app_id) or env.get("SteamAppId") == str(app_id))
+        cmd = cmdline(pid)
+        if not env_match and not (REAPER_RE.search(cmd) and f"AppId={app_id}" in cmd):
+            continue
+        role = _role(cmd, env_match, app_id)
+        if role:
+            found.append(Leftover(pid, role, cmd))
+    return found
+
+
+def reap_session(say=print, app_id=APP_ID, reaper_wait=20.0):
+    """Clears what a crashed session left behind. Refuses (LiveGameError) while the game exe runs: the user may be
+    playing. Otherwise the crash reporter is ended (SIGTERM, SIGKILL after 5 s) and the wait is up to `reaper_wait`
+    seconds for Steam's reaper of the app to exit. Returns what was found and what became of it."""
+    found = find_leftovers(app_id)
+    res = {"found": [f"{l.pid} {l.role}" for l in found], "terminated": [], "reaperGone": True}
+    if not found:
+        return res
+    for l in found:
+        say(f"leftover of the game session: pid {l.pid} ({l.role}) {l.cmd[:120]}")
+    live = [l for l in found if l.role == "game" and pid_alive(l.pid)]
+    if live:
+        raise LiveGameError(f"the game is still running (pid {live[0].pid}): not touching its session; "
+                            "close the game first")
+    for l in found:
+        if l.role == "crash-reporter" and pid_alive(l.pid):
+            say(f"ending the crash reporter (pid {l.pid})")
+            stop_pid(l.pid, grace=5.0)
+            res["terminated"].append(l.pid)
+
+    def reapers():
+        return [l for l in find_leftovers(app_id) if l.role == "reaper"]
+
+    end = time.monotonic() + reaper_wait
+    while reapers() and time.monotonic() < end:
+        time.sleep(0.25)
+    left = reapers()
+    res["reaperGone"] = not left
+    if left:
+        say(f"Steam's reaper for AppId {app_id} is still running after {reaper_wait:.0f} s (pid {left[0].pid})")
+    return res
+
+
+def steam_log_size(path=STEAM_CONSOLE_LOG):
+    try:
+        return Path(path).stat().st_size
+    except OSError:
+        return 0
+
+
+def steam_log_since(pos, path=STEAM_CONSOLE_LOG):
+    """Steam's console log written after byte `pos` (from the start if the log was truncated since)."""
+    try:
+        with open(path, "rb") as f:
+            size = f.seek(0, os.SEEK_END)
+            f.seek(pos if pos <= size else 0)
+            return f.read().decode(errors="replace")
+    except OSError:
+        return ""
+
+
+def waiting_prev_process(text, app_id=APP_ID):
+    """True when Steam reports that the app waits for a previous process of it to exit."""
+    return any("WaitingPrevProcess" in line and f"AppID {app_id}" in line for line in text.splitlines())
+
+
+def newest_crash_folder(crashes_dir, since):
+    """Name of the newest folder in the prefix's Saved/Crashes modified at or after `since`, or None."""
+    try:
+        dirs = [d for d in Path(crashes_dir).iterdir() if d.is_dir() and d.stat().st_mtime >= since]
+    except OSError:
+        return None
+    return max(dirs, key=lambda d: d.stat().st_mtime).name if dirs else None
 
 
 class Watchdog(threading.Thread):

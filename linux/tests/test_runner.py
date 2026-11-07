@@ -175,6 +175,10 @@ class RunnerTest(unittest.TestCase):
         (src / "ue4ss/Mods/mods.txt").write_text("; Built-in keybinds, do not move up!\nKeybinds : 1\n")
         self.env = mock.patch.dict(os.environ, {"OBLIVION_UE4SS_DIR": str(src)})
         self.env.start()
+        # no real Proton session of the user's machine is touched (see test_leftovers.py)
+        self.no_leftovers = mock.patch.object(game, "reap_session",
+                                              lambda say=print, **kw: {"found": [], "terminated": [], "reaperGone": True})
+        self.no_leftovers.start()
         self.paths = Paths(game_dir=gd, runtime=self.tmp / "run", prefix=self.tmp / "pfx",
                            env_file=self.tmp / "cfg/env", results=self.tmp / "results")
         saves = self.paths.saved / "SaveGames"
@@ -188,6 +192,7 @@ class RunnerTest(unittest.TestCase):
         self.before = {p: p.read_bytes() for p in self.tmp.rglob("*") if p.is_file()}
 
     def tearDown(self):
+        self.no_leftovers.stop()
         self.env.stop()
         shutil.rmtree(self.tmp)
 
