@@ -5,6 +5,24 @@ Investigations: [investigations.md](investigations.md).
 
 ## 2026-11-07
 
+### Canal spin of the render and cache switches (`spin-canal-render`, 4 slots each): `RdgSubmitBatch` stays on
+| Variant | avg fps | 1% low | 0.1% low | Worst frame | Hitches | GPU |
+|---|---|---|---|---|---|---|
+| base | 75.5 | 56.0 | 38.2 | 32.2 ms | 0 | 98% |
+| `RdgParallelTranslate=0` | 80.0 (+6%, noise) | | 42.0 | 38.1 ms | 0 | |
+| **`RdgSubmitBatch=0`** | 68.3 | 37.4 (−33%) | **18.4 (−52%)** | **56.2 ms** | **8** | **91%** |
+| `OsPageCache=0` | 79.0 (+5%, noise) | | 44.2 (+16%) | | 2 | |
+
+- `RdgSubmitBatch` clearly helps under Proton. Keep it on.
+- `RdgParallelTranslate=0` and `OsPageCache=0` look slightly better, but within noise. Retest them in a quiet run (the
+  OsPageCache simulator is in progress).
+- Noise was high: slot-to-slot spread 33–40%, against 15% earlier. Likely cause: agents building with clang and running
+  Wine self-tests on the same machine during the spin.
+- **Rule:** no heavy builds or Wine self-tests while a benchmark runs. Check `pgrep -f "clang|wine|selftest"` before
+  starting one.
+- `--warmup auto` works: it ended when `[pso] shader precompile finished` appeared, at +65.7 s after launch.
+
+
 ### Detail arrival, re-analysed with brightness-normalised sharpness: switches help on entering interiors only
 Metric: Laplacian variance divided by the squared mean luminance. Timing starts once the brightness has been stable for
 1 s. Re-analysis of the `vtdoor` A/B: 3+3 runs, medians, base → `VtStreamingUploads=64` + `FadeVtFlushSkip=1`.
