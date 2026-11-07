@@ -82,6 +82,46 @@ frame for 30 s; every wait has a timeout and the run has an overall time limit.
 Results: `linux/results/<time>-<label>/` with `result.json`, `report.md`, the MangoHud log (`mangohud/*.csv`) and the
 config used; `ab`/`report` write `linux/results/<time>-<label>/report.md` + `report.json`.
 
+## Fast iteration: one spot, live switches
+
+`bench.py spin` starts the game once, goes to one spot and turns the camera in full laps (default 30 deg/s, 12 s per
+lap, pitch 0), so streaming, LOD and GPU load repeat the same way every lap. Settings are flipped in the same
+session, in ABBA order, and each variant is measured over whole laps. The spots are in
+`bench/scenarios/linux-hotspots.json` (worst first, each with the doc section that names it; `list --scenario
+linux-hotspots` shows them; it is an ordinary scenario, so `run --scenario linux-hotspots` works too).
+
+```sh
+# the canal, ini switches off one at a time (base = the ini as installed is always the first variant)
+python3 linux/bench.py spin --scenario linux-hotspots --scene cheydinhal-canal --label canal \
+    --variant nopar:ini:RdgParallelTranslate=0 --variant nosub:ini:RdgSubmitBatch=0
+
+# UE console variables through the mod's cvar verb
+python3 linux/bench.py spin --scene ic-market-crowd --variant lowvd:cvar:r.ViewDistanceScale=0.6 --laps 3
+
+# any spot: --pos x,y,z --heading H with --world or --cell; slower turn, tilted down, with the HitchLedger split by variant
+python3 linux/bench.py spin --pos 117567,-120309,3154 --world Tamriel --heading 350 --hour 17 --weather Rain \
+    --deg-per-sec 20 --pitch -5 --variant a:ini:GpuSceneParallelUpload=0 --diag --label pond
+```
+
+Per slot: apply the variant (ini keys through `OblivionPerfFix.ini`, then 1.5 s for the DLL's one-second re-read;
+cvars set and read back with `get`), turn for `--settle` s (default 4), wait until the spin is at its start heading
+again and measure `--laps` whole laps (default 2). `--rounds N` (default 2) repeats forward-then-backward: two variants
+give A B B A A B B A. The ini and the cvars are put back at the end (also after an error or Ctrl+C; the file itself
+by the same guard as `run`).
+
+What can be flipped: ini keys whose comment in the shipped ini says `Live`, or `Start-up, then live` when the key is on in
+the ini the game starts with (it is installed at start-up only if on; flipping it off and on again works). Keys that are
+`Start-up only` (and `Takes a restart`), keys that are not in `[Fixes]`, and cvars that the benchmark profile pins are
+refused before the game starts. Environment variables (`VKD3D_*`) need a restart: use `run --env` / `ab`.
+
+Results in `linux/results/<time>-spin-<label>/`: `report.md` and `result.json` with, per variant, the median over its
+slots of avg fps, 1% / 0.1% low, p99 and max frame time, hitches and GPU/CPU load, the change against `base` (`~` =
+under 5 % or the slot-to-slot spread), the avg fps in eight 45-degree heading sectors (N, NE, ... NW; the worst is
+named) and every slot's fps range; `heading-timeline.json` holds what was sent to the game. The cinematic camera trails
+the heading sent by about 0.3 s (`--cam-lag`), which the sector assignment subtracts. With `--diag`, the HitchLedger rows
+are cut by variant window (the ledger's clock is anchored on the two sync stalls) and ranked per variant in
+`diag/ledger-<variant>.txt`.
+
 ## How the numbers are computed
 
 MangoHud logs every presented frame (`log_interval=0`, `autostart_log=1`, overlay cut down to a small fps counter; `no_display` stops MangoHud from logging):

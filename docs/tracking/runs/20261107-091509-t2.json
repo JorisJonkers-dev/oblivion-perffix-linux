@@ -1,0 +1,66 @@
+{
+ "diagFiles": null,
+ "dll": null,
+ "env": {
+  "MANGOHUD": "1",
+  "MANGOHUD_CONFIGFILE": "/home/ExtraToast/Projects/oblivion-perffix-linux/linux/results/20261107-091509-t2/mangohud.conf",
+  "OBLV_BENCH_MARKER": "/home/ExtraToast/Projects/oblivion-perffix-linux/run/launch-marker.txt",
+  "OBLV_GAME_ARGS": "-FixedSeed",
+  "WINEDLLOVERRIDES": "version=n,b;dwmapi=n,b"
+ },
+ "fix": "on",
+ "fixIniOverrides": null,
+ "label": "t2",
+ "loadSec": 50.6,
+ "outcome": "ok",
+ "profile": {
+  "description": "The default, quiet: 854x480 window, no upscaler (TAA at 100%), ray tracing on, no frame generation. CPU-bound with little GPU load (fan noise) while you work on the PC",
+  "fg": 0,
+  "mode": "windowed",
+  "name": "small",
+  "res": "854x480",
+  "rt": 1,
+  "scale": 100,
+  "upscaler": "none"
+ },
+ "scenario": "cheydinhal",
+ "scenes": [
+  {
+   "avgMs": 19.48,
+   "cond": {
+    "atEnd": "hour=12.008 wx=Clear:1.00 npcs=1 near=BP_OghashgraMagul@122430,94312",
+    "atSet": "hour=12.000 wx=Clear:1.00",
+    "hour": "12",
+    "pinned": true,
+    "timescale": "1",
+    "weather": "Clear"
+   },
+   "cpuLoad": 66.0,
+   "fps": 51.3,
+   "frames": 1026,
+   "gpuLoad": 82.8,
+   "hitchMs": 0,
+   "hitches": 0,
+   "hour": "12.01",
+   "id": "canal-noon",
+   "level": "L_CheydinhalWorld",
+   "longestGapMs": 28.3,
+   "low01": 35.8,
+   "low1": 39.1,
+   "over100": 0,
+   "over250": 0,
+   "over50": 0,
+   "p50Ms": 19.47,
+   "p95Ms": 24.34,
+   "p999Ms": 27.91,
+   "p99Ms": 25.59,
+   "seconds": 20.0,
+   "sub": "",
+   "type": "static",
+   "worstMs": 28.3
+  }
+ ],
+ "start": "fresh",
+ "time": "2026-11-07 09:15:09",
+ "warnings": []
+}
