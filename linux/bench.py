@@ -111,7 +111,8 @@ def cmd_ab(a, paths):
         for text in (a.a, a.b):
             fix, dll, name = dllvariant.parse_side(text)
             sides[name] = (fix, dll or a.dll)
-        dllvariant.check(a.dll, a.dll_ini)
+        dllvariant.check(a.dll, None)
+        dllvariant.check(next((d for _, d in sides.values() if d), None), a.dll_ini)
         if len(sides) != 2:
             raise ValueError("--a and --b are the same variant")
     except (ValueError, RuntimeError) as e:
@@ -126,7 +127,9 @@ def cmd_ab(a, paths):
             for side in (name_a, name_b):
                 label = f"{a.label}-{stamp}-{side}-r{rnd}"
                 say(f"== round {rnd}/{a.rounds}: {side} ({label})")
-                r = Runner(paths, run_options(a, label=label, fix=sides[side][0], dll=sides[side][1], keep_ue4ss=True), say=say).run()
+                r = Runner(paths, run_options(a, label=label, fix=sides[side][0], dll=sides[side][1],
+                                              dll_ini=a.dll_ini if sides[side][1] else None, keep_ue4ss=True),
+                           say=say).run()
                 if r["outcome"] == "failed":
                     raise SystemExit(f"run {label} failed: {r.get('error')} (see its report.md)")
                 code = max(code, 0 if r["outcome"] == "ok" else 1)
