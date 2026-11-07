@@ -255,6 +255,10 @@ struct Config {
     bool doorDiagEarlyStream = false;  // ... experiment: stream-all once when the loading screen idles (live)
     bool fadeVtFlushSkip = false;      // FadeVtFlushSkip (off by default): the r.VT.Flush the game runs 1.5 s into a
                                        // transition's fade-in skipped (installed only if on at start-up, then live)
+    bool streamPrewarm = false;        // StreamPrewarmBehindLoading (off by default): faster texture streaming budgets while a
+                                       // transition's loading screen idles, put back before the fade-in (live)
+    int streamPrewarmMaxHoldMs = 0;    // StreamPrewarmMaxHoldMs: extra loading screen time (ms, max 3000) while they stream; 0 = none
+                                       // (the hold needs a restart to switch on from 0)
     bool streamBehindLoading = true;   // StreamBehindLoadingScreen: a new area's textures stream while its loading screen is still
                                        // up, so the fade-in is not held for them (installed only if on at start-up, then live)
     int unfreezeBehindLoading = 0;     // prototype UnfreezeBehindLoadingScreen (trade-off, off by default): after an
@@ -1455,6 +1459,15 @@ void SetUnfreezeBehindLoading(int ms);                      // monitor thread, l
 void SetUnfreezeBehindLoadingFastTravel(int ms);            // ... its hold for fast travels (0 = UnfreezeBehindLoadingScreen's); live
 void StreamBehindLoadingFrameEnd();                         // game thread, once per frame (NpcCreationPacing's frame hook)
 void LogStreamBehindLoadingStats();
+// stream_prewarm.cpp (StreamPrewarmBehindLoading): streaming budgets raised while a transition's loading screen idles.
+bool FindStreamPrewarm();                                   // the console manager pointer (through FadeVtFlushSkip's search); false = unavailable
+void SetStreamPrewarm(bool on, int holdMs, bool vtUploadsKeyOn);  // monitor thread, live
+int StreamPrewarmHoldMs();                                  // the extra hold in ms (0 when off)
+bool StreamPrewarmActive();                                 // budgets raised right now
+void StreamPrewarmBegin(void* poolCvar);                    // game thread
+void StreamPrewarmEnd(uint32_t updates);                    // game thread
+void LogStreamPrewarmStats();
+void StreamPrewarmTestSetup(void** managerSlot);            // self-test only
 // an exec function (UFunction thunk) by its registered name, checked against a byte pattern (stream_behind_loading.cpp);
 // nullptr unless the name, its native-table pair and the match are each exactly one
 uint8_t* FindExecByName(const char* name, const char* shape);

@@ -566,6 +566,18 @@ and switches them on and off.
 
 <a id="vtstreaminguploads"></a>
 
+### Textures sharper when the loading screen ends (`StreamPrewarmBehindLoading`, off)
+
+After stepping outside, textures keep sharpening for several seconds, because the game limits how many texture pages it
+uploads and produces per frame while you play. Behind the loading screen the graphics card has room. With the switch on,
+once `StreamBehindLoadingScreen` sees the new area's loading is idle, the limits for virtual texture uploads and tiles
+per frame and the texture streamer's update interval are looked up by name and set to faster values (never slower than
+the current ones, each at the priority it already has); when the game's fade-to-game runs, each is set back to exactly
+the value it had, unless the game changed it meanwhile. `StreamPrewarmMaxHoldMs` can keep the loading screen up a little
+longer (in half-second steps, at most 3 s) so they have longer to work. Only the speed changes, not the finished picture.
+The log prints what was raised, the window's length and the streamer updates; the streamer's pending-request count is not
+available in this build.
+
 ### Walls and roofs sharp sooner after a door (`VtStreamingUploads`, trade-off, off)
 
 [Evidence](research.md#vtstreaminguploads). **A trade-off**: off by default (`VtStreamingUploads=0`), switched on only by

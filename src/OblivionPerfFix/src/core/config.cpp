@@ -140,6 +140,8 @@ Config LoadConfig(const wchar_t* iniPath)
     c.doorDiagEarlyStream = get(L"Fixes", L"DoorDiagEarlyStream", c.doorDiagEarlyStream) != 0;
     c.fadeVtFlushSkip = get(L"Fixes", L"FadeVtFlushSkip", c.fadeVtFlushSkip) != 0;
     c.streamBehindLoading = get(L"Fixes", L"StreamBehindLoadingScreen", c.streamBehindLoading) != 0;
+    c.streamPrewarm = get(L"Fixes", L"StreamPrewarmBehindLoading", c.streamPrewarm) != 0;
+    c.streamPrewarmMaxHoldMs = get(L"Fixes", L"StreamPrewarmMaxHoldMs", c.streamPrewarmMaxHoldMs);
     c.unfreezeBehindLoading = get(L"Fixes", L"UnfreezeBehindLoadingScreen", c.unfreezeBehindLoading);
     c.unfreezeBehindLoadingFastTravel = get(L"Fixes", L"UnfreezeBehindLoadingScreenFastTravel", c.unfreezeBehindLoadingFastTravel);
     c.npcCreationPacing = get(L"Fixes", L"NpcCreationPacing", c.npcCreationPacing) != 0;
