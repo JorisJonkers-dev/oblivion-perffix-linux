@@ -5,6 +5,27 @@ Investigations: [investigations.md](investigations.md).
 
 ## 2026-11-07
 
+### Run-log analysis (Haiku): the runner's own sync stalls polluted the ledgers
+Source: [../research-linux/ideas/run-log-analysis.md](../research-linux/ideas/run-log-analysis.md).
+
+The runner makes two 350 ms sync frames to align the MangoHud log. They made up 61–68% of the ledger's "unlabelled:
+before the world tick" bucket in the `cs-ab3` runs. The earlier conclusion that half of all slow-frame time is
+unlabelled was wrong: that half was mostly the runner's own stalls.
+
+With the sync frames removed:
+- **PSO precompile in play is the main real cost.** The precompile ends 40–58 s after reaching the world, which is
+  longer than the 40 s warm-up. It accounts for 302 of 317 ms of real excess in on-r2. The driver-thread guard finds no
+  driver compile threads under Wine, so it does nothing here.
+- **Frame-end sync and GPU waits** are large in slow frames; the GPU is the limit at these settings.
+- **NPC units:** one unit alone costs 17–61 ms, and the 4 ms budget is overrun 3–9 times per run.
+- **Steady tick:** `VPairedPawnMovementComponent` costs 0.63 ms per frame (26% of listed tick time).
+- **`OsPageCache`:** hit rate only 17–44%, with about 10k releases over its 64 MB cap.
+- No periodic spike pattern, so no sign of GC or autosave timers. No memory pressure.
+
+Fix under way: the runner's warm-up will wait for the PSO precompile to finish, and diag analysis will be limited to the
+measured windows (branch `runner-warmup`).
+
+
 ### Idea reviews (Haiku), in `docs/research-linux/ideas/`
 
 **render-streaming.md**

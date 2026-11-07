@@ -68,7 +68,7 @@ The ledger CSV logs only slow frames (>= 25 ms), so per-frame averages are not a
 | spin | 17 | 554 | 136 | 77 | 625 | 521 | 56 | 3 | 16 | 302 | 6 of 17 | 5 of 17 |
 
 Causes, after anchors are removed (`ledger.md` shares recomputed; the ledger's own shares include the anchors):
-- Render-thread and GPU PSO precompile in play is the largest labelled cause. In cs-r2, all of the real in-world excess (302 ms render-thread PSO, `ledger.md`) is PSO; in cs-r3, 282 ms render PSO plus 143 ms GPU PSO of 435 ms. In cs-r1 it is about 34% (355 + 212 ms of ~1670 ms, which includes the 437 ms frame).
+- Render-thread and GPU PSO precompile in play is the largest labelled cause. In cs-r2, nearly all of the real in-world excess (302 of 317 ms, `ledger.md`) is render-thread PSO; in cs-r3, 282 ms render PSO plus 143 ms GPU PSO of 435 ms. In cs-r1 it is about 34% (355 + 212 ms of ~1670 ms, which includes the 437 ms frame).
 - Frame-tail unlabelled (GC, UI, draw, level streaming): cs-r1 only, 498 ms of ~1670 ms (about 30%, mostly the 437 ms frame). Confidence: low. Cause not separable with the current stages.
 - Render-thread bound (no PSO label): cs-r1 336 ms (about 20%).
 - Actor arrival: cs-r1 155 ms (about 9%); cs-r3 10 ms.
@@ -76,7 +76,7 @@ Causes, after anchors are removed (`ledger.md` shares recomputed; the ledger's o
 - Menu and loading: only one "old-engine wait" per run at launch (cs-r1 frame 517, 2,596 ms, actor 2,549 ms; cs-r2 frame 524, 2,532 ms; cs-r3 frame 528, 2,464 ms; spin frame 257, 3,323 ms). These are in the menu state and happen once, at the start. Confidence: high that it is one-off. Cause unknown.
 - Loading screen: 14–17 slow frames per cs run, not ranked (`ledger.md`). The pacing lines below show that large unit bursts happen in the loading state.
 
-Lines in `ledger.md`/`stutter_ledger.txt` headers: play time 71–72 s per cs run (about 7,000–7,800 frames), so the in-world slow-frame rate is 0.2–0.3% of frames in cs-r2/r3 and about 0.7% in cs-r1 with the 437 ms frame.
+In-world slow-frame rate (`ledger.md`, play slow frames over play frames): cs-r1 54 of 7,066 (0.8%, with the 437 ms frame), cs-r2 8 of 7,409 (0.1%), cs-r3 19 of 7,821 (0.2%), spin 19 of 7,251 (0.3%).
 
 ## 3. OblivionPerfFix.log: per-fix counters
 
@@ -89,7 +89,7 @@ Counter lines are `since last report` stats printed about every 60 s. Notable va
   - In play (cs-r1): frame 7327 (60.7 ms, one unit, "first" 60.7 ms), 7331 (21.0 ms), 7332 (23.1 ms), 7334 (24.9 ms), 7587 (19.3 ms), 7588 (20.5 ms), 7621 (18.9 ms), so a single NPC unit can cost 17–61 ms.
   - Loading state: 46 units and 166–253 ms of units in one frame (cs-r1 frame 7262, cs-r2 8014, cs-r3 7800, spin 14738). These are not visible in play, but they are the largest unit spikes.
   - So the 4 ms budget is not kept for single units. That is expected (units cannot be split, per LOG.md), so the budget only orders work. Confidence: medium.
-- [oscache] (OS-side asset cache, 64 MB peak): cs runs about 5,300–5,600 hits and 26,400–26,600 misses (about 3.5 GB of misses) per 60 s window; released "over cap" 2,240–2,370 per window. Spin: 42,612 hits and 53,394 misses cumulative (8.6 GB of misses), released over cap 9,904. The cap is hit constantly. Confidence: medium that it limits hit rate; not tested.
+- [oscache] (OS-side asset cache, 64 MB peak): the counters are cumulative since start, not per window. cs runs at their last report: 5,300–5,600 hits and 26,400–26,600 misses (about 3.5 GB of misses), released "over cap" 2,240–2,370. Spin at its last report: 42,612 hits and 53,394 misses (8.6 GB of misses), released over cap 9,904. The cap is hit constantly. Confidence: medium that it limits hit rate; not tested.
 - [fadein] (spin only): 34,058 fade-in value changes in four windows, 22,757 sent to the GPU scene, 11,301 (33%) recreated the render state. Not linked to any slow frame. Confidence: low, a candidate cost.
 - [streamload] fade-in lag after streaming started: 1.0 s (cs, first transition), 1.9–2.4 s (later transitions, r1, r2, r3, spin). Cs has no door transition, so this is not in these runs.
 - [mem]: VRAM 4.6 GB (peak 4.8) of a 22.7 GB budget; RAM free 17–21 GB. No memory pressure in any run. "relief off".
@@ -112,7 +112,7 @@ Whole sessions include menu, loading and the first ~25 s of warm-up, so the dist
 
 - GPU-bound share: 57–93% of 1-second bins at GPU >= 90% (heuristic; the 1-s bins include menus). The canal spin is GPU-bound in 93% of bins. The CPU never reaches 80% for a sustained second in cs-r2/r3. Confidence: medium. Consistent with the 98% GPU in `result.json`.
 - Spike timing: spikes of >= max(2 x median, 25 ms) cluster in the first ~30 s (warm-up, PSO) and near the end (session close). Cluster gaps: median 1.8–5.6 s, p90 10–50 s, no fixed period (the most common gap is 1 s, which is the inside of one cluster). The data show no regular every-N-second spike, so GC or autosave on a fixed timer is not supported. Confidence: medium. The autosave timer was not checked against the log's `[autosave]` times.
-- Frame-time max 945–993 ms is the loading frames (rows with bad frametime were already handled by the 2 x gap rule in `track.py`).
+- Frame-time max 945–993 ms is in the loading frames. My filter dropped 4–9 rows per run above 1000 ms (MangoHud's garbage rows, cf. LOG.md on the 37,337,300 ms row).
 
 ## Top 5 targets (ranked by in-world slow-frame evidence)
 
@@ -120,7 +120,7 @@ Whole sessions include menu, loading and the first ~25 s of warm-up, so the dist
 2. Frame-end sync and GPU waits in slow frames. Evidence: sum of sync_ms across slow frames is 1280 ms (cs-r1), 664 (cs-r3), 521 (spin), with post_ms of the same order; 33 of 51 cs-r1 slow frames have gpu_ms above half the frame period. The frame waits for the GPU. Next step: which pass or upload stalls the GPU at these frames (PSO-linked ones first). Note that the earlier render-threading switches (`cs-render-off`) did not change fps, so test the GPU side directly. Confidence: medium.
 3. Single NPC unit costs (actor arrival). Evidence: in play, single units cost 17–61 ms (frames 7327 and 7331–7621, cs-r1); pacing overruns are 3–9 per run; the in-world actor-arrival share is 9% of real excess in cs-r1 (155 ms). Next step: the first unit of each arrival (the 20–40 ms non-splittable steps in `research-linux/npc-creation.md`), which is already the target of the ClothBuildDefer/NpcCreationPacing fixes. Confidence: medium.
 4. Steady tick cost of paired pawns. Evidence: VPairedPawnMovementComponent is 0.63 ms/frame (26% of listed tick time), 79 us per call, 6.4 calls per frame; with SkeletalMesh and Cloth the three cost about 1.1 ms/frame. Benefit for average fps is limited while the GPU is at 98%, but it is steady CPU time with no spike (top 1 in clean windows). Confidence: high that it is the largest steady tick cost; low that it changes the hitch rate.
-5. OS-side asset cache misses and the 64 MB cap. Evidence: 26,000+ misses per 60 s window in cs (about 3.5 GB), 9,900 releases over cap in spin; hit rate 17% (cs) and 44% (spin) by count. Next step: test a larger cap on a door or travel scene (where reads happen) and check whether the hit rate and the frame-tail share (30% in cs-r1) move. Confidence: low (guess, untested).
+5. OS-side asset cache misses and the 64 MB cap. Evidence: cs runs end with about 26,500 misses (3.5 GB) and about 2,300 releases over cap; spin ends with 53,394 misses (8.6 GB) and 9,904 releases over cap; hit rate 17% (cs) and 44% (spin) by count. Next step: test a larger cap on a door or travel scene (where reads happen) and check whether the hit rate and the frame-tail share (30% in cs-r1) move. Confidence: low (guess, untested).
 
 Also watch, not ranked: fade-in render-state recreations (33% of fade-in changes, spin); the 2.5–3.3 s launch stall (one per run, menu state); taskwait's 144–260 ms longest worker wait.
 
