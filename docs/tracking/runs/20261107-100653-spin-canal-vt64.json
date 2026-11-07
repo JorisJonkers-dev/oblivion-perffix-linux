@@ -1,0 +1,33 @@
+{
+ "diagFiles": [
+  "OblivionPerfFix-ledger.csv",
+  "OblivionPerfFix-ticksplit.csv",
+  "OblivionPerfFix.log"
+ ],
+ "dll": null,
+ "env": {
+  "MANGOHUD": "1",
+  "MANGOHUD_CONFIGFILE": "/home/ExtraToast/Projects/opf-run/linux/results/20261107-100653-spin-canal-vt64/mangohud.conf",
+  "OBLV_BENCH_MARKER": "/home/ExtraToast/Projects/opf-run/run/launch-marker.txt",
+  "OBLV_GAME_ARGS": "-FixedSeed",
+  "WINEDLLOVERRIDES": "version=n,b;dwmapi=n,b"
+ },
+ "fix": "on",
+ "fixIniOverrides": {
+  "HitchLedger": "1",
+  "HitchLedgerTickSplit": "1"
+ },
+ "label": "spin-canal-vt64",
+ "loadSec": 49.2,
+ "outcome": "ok",
+ "profile": {
+  "description": "Your own settings as they are (resolution, window mode, upscaler, quality, frame cap): nothing is changed. Used by -Watch. Results depend on those settings, so say which ones you used when you share them",
+  "name": "own",
+  "own": true
+ },
+ "scenario": "linux-hotspots",
+ "scenes": [],
+ "start": "fresh",
+ "time": "2026-11-07 10:06:53",
+ "warnings": []
+}

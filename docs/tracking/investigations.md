@@ -21,3 +21,5 @@ Status: `open`, `running`, `done`, `parked`. Each finding goes into [LOG.md](LOG
 | 15 | Does ntfs-3g file reading cause pop-in? (page cache warm vs cold) | open | – | needs runs on door and travel scenes |
 | 16 | Does the game slow down over long sessions (memory)? | open | – | needs a 60–120 min spin session with memory sampling |
 | 17 | C0: old-engine profiler and crash context (read-only diagnostics fix) | running | – | branch `oldengine-research2` (agent) |
+| 18 | Which identical-image GPU-efficiency options help at GPU-bound spots (canal 98% GPU)? | open | – | vkd3d env A/B, async compute cvars |
+| 19 | Do `VtStreamingUploads=64` and `FadeVtFlushSkip=1` shorten detail arrival after doors on Linux? | open | No fps effect at a static spin (expected) | needs door scenes |

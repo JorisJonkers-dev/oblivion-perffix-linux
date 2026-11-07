@@ -5,6 +5,30 @@ Investigations: [investigations.md](investigations.md).
 
 ## 2026-11-07
 
+### First spin session: canal, base vs `VtStreamingUploads=64` (`spin-canal-vt64`)
+Report: [runs/20261107-100653-spin-canal-vt64.md](runs/20261107-100653-spin-canal-vt64.md).
+
+**The spin method works:**
+- Laps inside a slot agree within 1–3 fps.
+- Live ini flips take effect.
+- The ledger anchors to the frame log and splits by variant.
+
+**Result:**
+- Base: 80.2 fps; vt64: 81.3 fps. All differences are within noise: 1% low −2%, 0.1% low +10%, worst frame 22.9 → 27.1 ms.
+- That is expected: the switch targets detail arriving after doors, and nothing streams at a static spot.
+
+**The canal at the user's settings is GPU-bound** (GPU 98%, CPU 56%).
+- By heading, SE is about 102 fps and W/NW about 68 fps, the worst.
+- The CPU-side fixes (most of OblivionPerfFix) cannot raise average fps here.
+- Gains at GPU-bound spots must come from GPU efficiency at identical image: vkd3d/driver options, async compute,
+  upload paths. Or the work targets hitches and pop-in rather than average fps.
+
+**Lessons:**
+- The first slot after the warm-up runs low (73 vs 83 fps in later base slots). Add a throw-away first slot, or a
+  longer settle.
+- Test `VtStreamingUploads` / `FadeVtFlushSkip` on door scenes (`cheydinhal` inn-door, `transitions`), not spins.
+
+
 ### Chapel square, 3 balanced rounds: no regression from the fix (`cs-ab3`)
 Report: [runs/20261107-100513-cs-ab3.md](runs/20261107-100513-cs-ab3.md).
 
