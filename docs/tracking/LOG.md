@@ -5,6 +5,37 @@ Investigations: [investigations.md](investigations.md).
 
 ## 2026-11-07
 
+### Idea reviews (Haiku), in `docs/research-linux/ideas/`
+
+**render-streaming.md**
+- Re-measure `RdgSubmitBatch` and `RdgParallelTranslate` on RADV; their costs and savings were measured on Windows D3D12.
+- Check whether async-compute cvars exist in this build, then flip them live.
+- Skip TLAS rebuilds when the inputs are identical.
+- Make Nanite's Hierarchy and ImposterData keep their capacity.
+- Make the RT upload buffers keep their size.
+
+**npc-physics-loading.md**
+- Near-create waiting behind far deferred creates: needs a counter first.
+- Revive PerceptionIgnoreReuse (lab: 441k comparisons with zero differences, about 6% less crowd GT time).
+- Measure, then warm, character PSOs.
+- Pre-touch memory at the loading screen.
+- Parallel save serialisation, an estimated 10–20 ms per save.
+
+**core-memory-guards.md**
+- A long-session soak with an object-count CSV and first-chance access-violation logging.
+- A UMA memory policy that works under Wine.
+- A start-up scan cache, about 0.8 s per launch.
+- A/B `OsPageCache` under Proton.
+- Re-parse the ini only when it changed.
+
+**run-log-analysis.md**: still being written.
+
+### Method correction: tick split adds overhead
+`HitchLedgerTickSplit` adds up to about 0.4 ms per frame in crowds. In `cs-ab3` only the fix-on side had `--diag`, so
+that side carried extra overhead; the small gain there is, if anything, understated. From now on, A/B comparisons run
+without `--diag`, with separate diag runs.
+
+
 ### `VKD3D_CONFIG=no_upload_hvv` at the canal: no measurable gain (2+2 runs)
 
 | Variant | fps (r1 / r2) | 1% lows | Worst frame |
