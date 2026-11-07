@@ -5,6 +5,45 @@ Investigations: [investigations.md](investigations.md).
 
 ## 2026-11-07
 
+### Chapel square, 3 balanced rounds: no regression from the fix (`cs-ab3`)
+Report: [runs/20261107-100513-cs-ab3.md](runs/20261107-100513-cs-ab3.md).
+
+| | Fix not loaded | Fix on | Change |
+|---|---|---|---|
+| avg fps | 69.2 | 70.0 | +1%, within noise |
+| 1% low | 55.7 | 58.3 | +5% |
+| 0.1% low | 45.5 | 54.1 | +19% |
+| worst frame | 25.8 ms | 18.8 ms | −27% |
+
+- Neutral to slightly positive. The earlier −25% and the CPU-bound episodes did not repeat in 6 balanced runs, so
+  they were not caused by the fix itself.
+- The spread between sessions is large: without the fix, fps went from 64 to 74 here, against 94 earlier today.
+- Suspect for the spread: FSR. The game turns FSR off when its window loses focus, so it renders at 100% instead of
+  58.8%. Run on-r1 caught exactly that: `r.ScreenPercentage changed during the pass: 58.8 -> 100`. The user working
+  on the PC during runs, or the window not being in front, probably explains the episodes.
+- Next:
+  - record focus and ScreenPercentage per scene;
+  - keep the game in front;
+  - consider the `small` profile (no FSR) for CPU-side work.
+
+### Hitch ledger on Linux (first data, `cs-ab3` on-r1)
+Slow frames in play, by share of excess time:
+
+| Cause | Share |
+|---|---|
+| Unlabelled (async loading, GC and streaming at the frame tail) | 50% |
+| PSO precompile still running after the 40 s warm-up (render- or GPU-bound) | 24% |
+| Render-thread bound | 14% |
+| Actor arrival | 7% |
+| Tick work | 4% |
+
+At start-up in the menu, one 2.6 s old-engine wait.
+
+Lessons:
+- The warm-up should wait until the PSO precompile has finished, not a fixed 40 s.
+- The unlabelled half is what the C0 old-engine profiler and DoorDiag should break down.
+
+
 ### Chapel square: the slowdown comes in episodes where the CPU spikes and the GPU waits
 At Cheydinhal's chapel square, some runs fall into a mode where the CPU is the limit, with many hitches. The fix-group
 runs show this is an episode, not a constant cost of one fix group.
