@@ -547,12 +547,14 @@ static void Run(const GameModule& game)
     tick();
     Check(PsoPrecompileGateHolding() && now().inPlay == 0 && ShaderGateHoldsTick(),
           "shader gate (live order): calm after the held tick began is not play: still held, not in play");
+    Check(!PsoPlayStarted(), "shader gate (live order): PsoPlayStarted is false while the gate holds");
     running(false);
     tick();
     Check(!ShaderGateHoldsTick() && !PsoPrecompileGateHolding() && strstr(PsoPrecompileGateEnd(), "precompile has finished"),
           "shader gate (live order): released when the precompile finishes, not by the calm");
     tick();
     Check(now().inPlay == 1, "shader gate (live order): and after the release the calm counts as play");
+    Check(PsoPlayStarted(), "shader gate (live order): PsoPlayStarted (PsoRecordReplay's play signal) is true once the gate has released");
     running(true);
     Check(!ShaderGateHoldsTick(), "shader gate (live order): nothing held afterwards");
 
