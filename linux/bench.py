@@ -48,7 +48,8 @@ def run_kwargs(a, **over):
               label=a.label, fix=getattr(a, "fix", "on"), profile=a.profile, warmup=a.warmup, keep_ue4ss=a.keep_ue4ss,
               show_hud=a.show_hud, pin=not a.no_pin, fixed_seed=not a.no_fixed_seed, native_res=a.native_res,
               stall_sec=a.stall_sec, max_minutes=a.max_minutes, launch_timeout=a.launch_timeout, steam=a.steam,
-              fix_ini=a.fix_ini, env=a.env, diag=a.diag)
+              fix_ini=a.fix_ini, env=a.env, diag=a.diag, detail=a.detail,
+              detail_secs=a.detail_secs, detail_interval=a.detail_interval)
     kw.update(over)
     return kw
 
@@ -134,22 +135,38 @@ def cmd_spin(a, paths):
     return 0 if r["outcome"] == "ok" else (1 if r["outcome"] == "partial" else 2)
 
 
+def side_ini(a, side):
+    """--fix-ini (both sides) followed by this side's --a-ini / --b-ini, which win where they overlap."""
+    return (a.fix_ini or []) + (getattr(a, f"{side}_ini", None) or []) or None
+
+
+def side_name(a, side):
+    name = getattr(a, f"name_{side}", None)
+    if name:
+        return name
+    mode = getattr(a, side)
+    extra = ",".join(getattr(a, f"{side}_ini", None) or [])
+    return f"{mode}+{extra}" if extra else mode
+
+
 def cmd_ab(a, paths):
     inst = installer(paths)
-    names = {a.a: [], a.b: []}
+    sides = [("a", a.a), ("b", a.b)]
+    names = {"a": [], "b": []}
     stamp = time.strftime("%m%d-%H%M")
     code = 0
     try:
         inst.install()
         for rnd in range(1, a.rounds + 1):
-            for side in (a.a, a.b):
-                label = f"{a.label}-{stamp}-{side}-r{rnd}"
-                say(f"== round {rnd}/{a.rounds}: {side} ({label})")
-                r = Runner(paths, run_options(a, label=label, fix=side, keep_ue4ss=True), say=say).run()
+            for key, mode in sides:
+                label = f"{a.label}-{stamp}-{key.upper()}{mode}-r{rnd}"
+                say(f"== round {rnd}/{a.rounds}: {key.upper()} = {side_name(a, key)} ({label})")
+                r = Runner(paths, run_options(a, label=label, fix=mode, keep_ue4ss=True, fix_ini=side_ini(a, key)),
+                           say=say).run()
                 if r["outcome"] == "failed":
                     raise SystemExit(f"run {label} failed: {r.get('error')} (see its report.md)")
                 code = max(code, 0 if r["outcome"] == "ok" else 1)
-                names[side].append(label)
+                names[key].append(label)
                 time.sleep(10)          # let Steam see the game end before the next launch
     finally:
         if not a.keep_ue4ss:
@@ -157,8 +174,8 @@ def cmd_ab(a, paths):
                 inst.remove()
             except Exception as e:
                 say(f"WARNING: UE4SS not removed: {e}")
-    d = write_comparison(load_runs(names[a.a], paths.results), load_runs(names[a.b], paths.results), a.a, a.b,
-                         paths.results, a.label)
+    d = write_comparison(load_runs(names["a"], paths.results), load_runs(names["b"], paths.results),
+                         side_name(a, "a"), side_name(a, "b"), paths.results, a.label)
     say(f"REPORT {d / 'report.md'}")
     print((d / "report.md").read_text())
     return code
@@ -192,6 +209,11 @@ def add_run_args(p):
                    help="extra environment (repeat the flag for more) for this launch, e.g. VKD3D_CONFIG=no_upload_hvv")
     p.add_argument("--diag", action="store_true",
                    help="engine diagnostics: HitchLedger + HitchLedgerTickSplit, copied and ranked into the run folder")
+    p.add_argument("--detail", action="store_true",
+                   help="detail arrival: grab the game window after each door arrival (and in static scenes with "
+                        "\"detail\": true) and report the time to sharp textures (costs some fps)")
+    p.add_argument("--detail-secs", type=float, default=12, help="seconds of captures after the arrival (default 12)")
+    p.add_argument("--detail-interval", type=float, default=0.5, help="seconds between captures (default 0.5)")
     p.add_argument("--launch-timeout", type=float, default=240)
     p.add_argument("--steam", default="steam")
 
@@ -242,6 +264,11 @@ def main(argv=None):
     p.add_argument("--rounds", type=int, default=2)
     p.add_argument("--a", default="stock", choices=["on", "stock", "off"])
     p.add_argument("--b", default="on", choices=["on", "stock", "off"])
+    p.add_argument("--a-ini", action="append", metavar="KEY=VAL[,KEY=VAL]",
+                   help="[Fixes] keys for side A only (on top of --fix-ini, which applies to both)")
+    p.add_argument("--b-ini", action="append", metavar="KEY=VAL[,KEY=VAL]", help="the same for side B")
+    p.add_argument("--name-a", help="name of side A in the report (default: its --a mode plus its --a-ini)")
+    p.add_argument("--name-b", help="name of side B in the report")
     p = sub.add_parser("report", help="compare existing runs")
     p.add_argument("--a", action="append", required=True, help="run labels or folders, comma separated")
     p.add_argument("--b", action="append", required=True)
@@ -251,8 +278,8 @@ def main(argv=None):
     a = ap.parse_args(argv)
     if a.cmd == "ab":
         a.fix = a.a
-        if a.a == a.b:
-            ap.error("--a and --b must differ")
+        if a.a == a.b and not (a.a_ini or a.b_ini):
+            ap.error("--a and --b must differ (or differ in --a-ini / --b-ini)")
     paths = Paths(game_dir=a.game_dir) if a.game_dir else Paths()
 
     def stop(signum, frame):

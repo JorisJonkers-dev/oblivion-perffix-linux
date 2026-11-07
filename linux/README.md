@@ -57,7 +57,8 @@ python3 linux/bench.py restore [--ue4ss]                 # put back what a kille
 
 Options of `run` / `ab`: `--profile` (bench/profiles.json; default the scenario's, else `small`, an 854x480
 window), `--native-res 2560x1440` (what `native` profiles mean), `--start fresh|continue`, `--warmup 60`,
-`--keep-ue4ss`, `--show-hud`, `--no-pin`, `--no-fixed-seed`, `--max-minutes`, `--stall-sec`.
+`--keep-ue4ss`, `--show-hud`, `--no-pin`, `--no-fixed-seed`, `--max-minutes`, `--stall-sec`, `--detail`,
+`--detail-secs`, `--detail-interval` (below); `ab` also `--a-ini` / `--b-ini` / `--name-a` / `--name-b`.
 
 `--fix`:
 - `on` (or `fix`): the DLL with your `OblivionPerfFix.ini` as installed;
@@ -81,6 +82,41 @@ frame for 30 s; every wait has a timeout and the run has an overall time limit.
 
 Results: `linux/results/<time>-<label>/` with `result.json`, `report.md`, the MangoHud log (`mangohud/*.csv`) and the
 config used; `ab`/`report` write `linux/results/<time>-<label>/report.md` + `report.json`.
+
+## Detail arrival: time to sharp textures
+
+FPS cannot show how soon after a door or fast travel the textures are sharp (what `VtStreamingUploads` and
+`FadeVtFlushSkip` are for). `--detail` grabs the game window every `--detail-interval` s (default 0.5) for
+`--detail-secs` s (default 12) after each door/fast-travel arrival, and in static scenes that have `"detail": true`
+(from the start of their measured window), and measures how sharp the picture is. Off by default: a capture costs some
+fps and the window is grabbed with `xwd` through XWayland.
+
+```sh
+python3 linux/bench.py ab --scenario cheydinhal --scenes inn-door,chapel-door,west-gate --a on --b on \
+    --fix-ini <keys both sides share> --b-ini VtStreamingUploads=64,FadeVtFlushSkip=1 --detail --rounds 3 --label vt
+python3 linux/bench.py run --scenario cheydinhal --scenes inn-door --detail --label d1     # one side only
+```
+
+`ab` applies `--fix-ini` to both sides; `--a-ini KEY=V,...` / `--b-ini KEY=V,...` add keys to one side only (they win
+over `--fix-ini`), so `--a on --b on --b-ini ...` compares the installed ini with the same ini plus the switches. Every
+side gets a fresh game, so keys that need a restart (`FadeVtFlushSkip`) take effect. The report names the sides
+`on` / `on+VtStreamingUploads=64,...` (override with `--name-a` / `--name-b`).
+
+How it works: `xdotool search --name 'Oblivion Remastered'` finds the window and `xwd -id <win> -silent` dumps it (both
+found on PATH or in `/nix/store`; `nix build nixpkgs#xdotool nixpkgs#xorg.xwd --no-link --print-out-paths`). The XWD is
+parsed in pure Python and block-averaged to about 640x360 on the green channel (about 35 ms for 2560x1440 plus the
+`xwd` run itself). Sharpness = variance of the Laplacian of that picture over its central 80 %, without the scenario's
+`masks` (HUD) and the MangoHud overlay (top left). Captures start at the detected arrival (the runner has no fade
+event): the fade-in is over at the first capture whose mean brightness reaches 90 % of its final value, and all times
+below count from there. Per leg (`result.json`, `report.md`, and the A/B report as median over the runs and change vs A):
+
+- `detailSettleS`: first time from which the sharpness stays within 3 % of the median of the last 2 s;
+- `detailAt1s` / `detailAt2s` / `detailAt4s`: sharpness at that time relative to the final value (1.00 = sharp);
+- `detailFadeS` (fade-in end, from arrival), `detailFinal`, `detailSamples`, `detailSeries` (`[t, sharpness, mean]`);
+- warnings for failed captures and for black frames (`detailBlack`).
+
+Absolute sharpness depends on the scene; only compare the same leg between sides. Don't move or cover the game window
+while it runs, and use the same window size on both sides.
 
 ## Fast iteration: one spot, live switches
 

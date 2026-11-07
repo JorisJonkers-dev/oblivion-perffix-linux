@@ -18,6 +18,12 @@ METRICS = [  # key, title, format, higher is better
     ("gpuLoad", "GPU %", "{:.0f}", None),
 ]
 NOISE_PCT = 5.0
+DETAIL_METRICS = [  # key, title, format, higher is better
+    ("detailSettleS", "sharp after s", "{:.1f}", False),
+    ("detailAt1s", "sharpness at 1 s", "{:.2f}", True),
+    ("detailAt2s", "at 2 s", "{:.2f}", True),
+    ("detailAt4s", "at 4 s", "{:.2f}", True),
+]
 
 
 def _fmt(fmt, v):
@@ -43,6 +49,14 @@ def run_report(r):
                 out.append(f"| {s['id']} | {s['arriveSec']} | {_fmt('{:.1f}', s.get('afterFps'))} | "
                            f"{_fmt('{:.1f}', s.get('afterLow1'))} | {_fmt('{:.0f}', s.get('afterHitches'))} | "
                            f"{_fmt('{:.1f}', s.get('afterWorstMs'))} |")
+    det = [s for s in rows if "detailSamples" in s]
+    if det:
+        out += ["", "Detail arrival (time counted from the end of the fade-in; sharpness relative to the final value):", "",
+                "| scene | samples | fade-in ends s | " + " | ".join(m[1] for m in DETAIL_METRICS) + " |",
+                "|---|---:|---:|" + "---:|" * len(DETAIL_METRICS)]
+        for s in det:
+            out.append(f"| {s['id']} | {s['detailSamples']} | {_fmt('{:.1f}', s.get('detailFadeS'))} | "
+                       + " | ".join(_fmt(f, s.get(k)) for k, _, f, _ in DETAIL_METRICS) + " |")
     if r.get("warnings"):
         out += ["", "## Warnings", ""] + [f"- {w}" for w in r["warnings"]]
     out += ["", "A hitch is a frame longer than max(2 x the scene's median, 40 ms); 1% / 0.1% low = 1000 / the 99th / "
@@ -105,6 +119,17 @@ def compare(runs_a, runs_b, name_a="A", name_b="B"):
                 d = 100.0 * (mb - ma) / ma
             row[key] = {"a": ma, "b": mb, "deltaPct": None if d is None else round(d, 1),
                         "noise": d is not None and abs(d) < NOISE_PCT, "aRuns": va, "bRuns": vb}
+        for key, _, _, _ in DETAIL_METRICS:
+            va = [s.get(key) for s in a[sid]]
+            vb = [s.get(key) for s in b[sid]]
+            ma, mb = _median(va), _median(vb)
+            if ma is None and mb is None:
+                continue
+            d = None if ma is None or mb is None else mb - ma
+            pct = None if d is None or not ma else 100.0 * d / ma
+            row.setdefault("detail", {})[key] = {"a": ma, "b": mb, "delta": None if d is None else round(d, 3),
+                                                 "deltaPct": None if pct is None else round(pct, 1),
+                                                 "aRuns": va, "bRuns": vb}
         out[sid] = row
     return {"a": name_a, "b": name_b, "scenes": out,
             "onlyA": [s for s in a if s not in b], "onlyB": [s for s in b if s not in a]}
@@ -135,6 +160,26 @@ def compare_markdown(cmp, runs_a, runs_b):
             d = "" if c["deltaPct"] is None else f" ({c['deltaPct']:+.0f}%{' ~' if c['noise'] else ''})"
             cells.append(f"{fmts[k].format(c['a'])} -> {fmts[k].format(c['b'])}{d}")
         out.append(f"| {sid} | {row['runs'][0]}+{row['runs'][1]} | " + " | ".join(cells) + " |")
+    dets = {sid: row["detail"] for sid, row in cmp["scenes"].items() if row.get("detail")}
+    if dets:
+        out += ["", "## Detail arrival (time to sharp textures)", "",
+                f"Median of the runs, {a} -> {b} (change). Times run from the end of the fade-in; the sharpness at "
+                "1 / 2 / 4 s is relative to the final value (1.00 = already sharp). Lower time and higher sharpness "
+                "are better.", "",
+                "| scene | " + " | ".join(t for _, t, _, _ in DETAIL_METRICS) + " |",
+                "|---|" + "---|" * len(DETAIL_METRICS)]
+        for sid, dd in dets.items():
+            cells = []
+            for k, _, f, _ in DETAIL_METRICS:
+                c = dd.get(k)
+                if not c or c["a"] is None or c["b"] is None:
+                    cells.append("-" if not c else f"{_fmt(f, c['a'])} -> {_fmt(f, c['b'])}")
+                    continue
+                unit = " s" if k == "detailSettleS" else ""
+                chg = f"{c['delta']:+.1f} s" if k == "detailSettleS" else (
+                    f"{c['deltaPct']:+.0f}%" if c["deltaPct"] is not None else "")
+                cells.append(f"{f.format(c['a'])} -> {f.format(c['b'])}{unit} ({chg})")
+            out.append(f"| {sid} | " + " | ".join(cells) + " |")
     if cmp["onlyA"] or cmp["onlyB"]:
         out += ["", f"Measured on one side only: {', '.join(cmp['onlyA'] + cmp['onlyB'])}"]
     warn = [(r.get("label"), w) for _, r in runs_a + runs_b for w in r.get("warnings") or []]
