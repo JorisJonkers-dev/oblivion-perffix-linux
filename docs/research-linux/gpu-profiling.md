@@ -42,8 +42,7 @@ linux/gpuprof.sh clear
 python3 linux/bench.py spin <your usual spin args for the GPU-bound spot> $(linux/gpuprof.sh env)
 ```
 
-What they set: `VK_DRIVER_FILES`/`VK_ICD_FILENAMES` (the custom RADV), `MESA_VK_TRACE=ranges`, `MESA_VK_TRACE_PER_SUBMIT=1` (trace every
-submit; see "Limits" for why not a trigger), `MESA_GPU_TRACES=print_csv`, `MESA_GPU_TRACEFILE=~/.cache/oblivion-bench/gpuprof/trace.csv`
+What they set: `VK_DRIVER_FILES`/`VK_ICD_FILENAMES` (the custom RADV), `MESA_VK_TRACE=ranges`, `MESA_GPU_RANGES_*` (window, below), `MESA_GPU_TRACES=print_csv`, `MESA_GPU_TRACEFILE=~/.cache/oblivion-bench/gpuprof/trace.csv`
 (under `$HOME` so Steam's container sees it; `/tmp` is private there).
 
 **First check that the custom driver is really the one in the game** (the one thing I could not test): after the run
@@ -84,8 +83,9 @@ as long as the shader cache / game build stays the same.
 - **Absolute numbers are inflated**: every tracepoint inserts PS+CS partial flushes and a cache flush (`radv_utrace_write_timestamp` in
   `layers/radv_utrace_layer.c`), so overlapped work runs serially. Trust ranking and share, or scale with `--real-ms`. Async compute work is
   serialised too and not separated (`batch` column is per flush, not per queue).
-- **Always-on capture**: in ranges mode `MESA_VK_TRACE_TRIGGER`/`_FRAME` do nothing (RADV only implements them for RGP/RRA; the layer
-  checks `capture_key_pressed` (X11 hotkey, held) or `MESA_VK_TRACE_PER_SUBMIT`). Hence per-submit tracing for the whole run.
+- **Capture window (patched in)**: stock ranges mode ignores `MESA_VK_TRACE_TRIGGER/_FRAME` and traces every submit forever. The patch adds
+  `MESA_GPU_RANGES_TRIGGER=<file>` (touch it, `gpuprof.sh trigger`), `MESA_GPU_RANGES_AFTER_SEC=<s>` (after the first present), `MESA_GPU_RANGES_FRAMES=<n>`;
+  outside the window nothing is timestamped. Only the graphics queue is traced; a CSV `frame` is a present; the CSV is flushed every frame.
 - **No pass names**: Shipping emits none. Names come from you via `--name`. Pipeline hashes are RADV's (what RGP shows as "pipeline hash"),
   not vkd3d's shader hashes.
 - `RADV_GPU_TRACEPOINT=<categories>` (to trace only `draw,dispatch,rendering`) exists in the source but my one try crashed vkcube [TESTED]; do not use it.
@@ -107,3 +107,24 @@ The format is chunked (`ac_rgp.c`, `ac_sqtt.h` in Mesa) but the per-event times 
 ## Files
 
 `linux/gpuprof.sh`, `tools/gpuprof/{mesa-radv-utrace.nix,patch-utrace.py,utrace_report.py}`, `linux/tests/test_gpuprof.py`.
+
+## Live attempt 1 (2026-11-07): what went wrong, what changed
+
+Both runs (`linux/results/20261107-133433-gpuprof-canal`, `-133545-gpuprof-canal2`) ended in a **GPU crash** (UE wrote
+`Saved/Crashes/UECC-*`: `CrashType GPUCrash`, empty RHI breadcrumbs), not a stall or a log-pipe problem; the runner's watchdog only reported the
+dead game ("process gone" / "no new frame for 30 s, frames=0"). The 24 MB/3.4 MB `trace.csv` held only the 746x600 launcher window (a few
+hundred tiny "frames"); no vkd3d frame was ever traced, so the device was lost before the world. Suspects in the stock layer, all removed or
+reduced by the patch: tracing every queue including async compute (a source comment: "ace timestamps don't always complete", and the
+read side waits on them), a partial flush plus cache flush around every command of every submit from the first frame, the per-frame
+stderr stats flood (150 MB log), a "frame" per submit. **Not proven** which one killed it; the cause could also be vkd3d command-buffer shapes the
+layer mishandles. So the next run is staged:
+
+1. `idle`: custom driver loaded, window never opens (tracepoints recorded, no timestamps, submits pass straight through). If this
+   still crashes, the layer itself is the problem, not the flushes: stop and use RGP.
+2. Window: opens after `GPUPROF_AFTER_SEC` or on `gpuprof.sh trigger`, 40 presents, graphics queue only.
+
+Runs profiled this way should not use `PROTON_LOG=1`. Raise the runner's stall watchdog (`--stall-sec 300`) so a slow traced frame is not
+mistaken for a stall.
+
+Parser on the real (launcher) data: `utrace_report.py trace.csv --last 400` printed the tables above for the 746x600 window (3 passes/frame, 25 draws, top pipeline
+`0x5a092ca4f953d33c`); a trailing half-written line from the kill is skipped.
