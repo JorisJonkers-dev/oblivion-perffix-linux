@@ -1,0 +1,111 @@
+{
+ "diagFiles": [
+  "OblivionPerfFix-ledger.csv",
+  "OblivionPerfFix-ticksplit.csv",
+  "OblivionPerfFix-otprofile.csv",
+  "OblivionPerfFix.log",
+  "OblivionPerfFix-oscache-trace.bin"
+ ],
+ "dll": {
+  "path": "/home/ExtraToast/Projects/opf-run/build-linux/OblivionPerfFix.dll",
+  "sha256": "c1b57556106f84273e4b7b7116caa2e6aaf19e07433a13c780f4770abcc7bb3a",
+  "size": 1860608
+ },
+ "env": {
+  "MANGOHUD": "1",
+  "MANGOHUD_CONFIGFILE": "/home/ExtraToast/Projects/opf-run/linux/results/20261107-115846-dll2-diag/mangohud.conf",
+  "OBLV_BENCH_MARKER": "/home/ExtraToast/Projects/opf-run/run/launch-marker.txt",
+  "OBLV_GAME_ARGS": "-FixedSeed",
+  "WINEDLLOVERRIDES": "version=n,b;dwmapi=n,b"
+ },
+ "fix": "on",
+ "fixIniOverrides": {
+  "HitchLedger": "1",
+  "HitchLedgerTickSplit": "1",
+  "OsPageCacheTrace": "1",
+  "OtProfile": "1"
+ },
+ "label": "dll2-diag",
+ "loadSec": 48.5,
+ "outcome": "ok",
+ "profile": {
+  "description": "Your own settings as they are (resolution, window mode, upscaler, quality, frame cap): nothing is changed. Used by -Watch. Results depend on those settings, so say which ones you used when you share them",
+  "name": "own",
+  "own": true
+ },
+ "scenario": "cheydinhal",
+ "scenes": [
+  {
+   "avgMs": 15.5,
+   "cond": {
+    "atEnd": "hour=12.008 wx=Clear:1.00 npcs=1 near=BP_OghashgraMagul@122538,94356",
+    "atSet": "hour=12.000 wx=Clear:1.00",
+    "hour": "12",
+    "pinned": true,
+    "timescale": "1",
+    "weather": "Clear"
+   },
+   "cpuLoad": 48.0,
+   "fps": 64.5,
+   "frames": 1290,
+   "gpuLoad": 97.5,
+   "hitchMs": 0,
+   "hitches": 0,
+   "hour": "12.01",
+   "id": "canal-noon",
+   "level": "L_CheydinhalWorld",
+   "longestGapMs": 19.1,
+   "low01": 53.2,
+   "low1": 56.1,
+   "over100": 0,
+   "over250": 0,
+   "over50": 0,
+   "p50Ms": 15.42,
+   "p95Ms": 17.11,
+   "p999Ms": 18.8,
+   "p99Ms": 17.81,
+   "seconds": 20.0,
+   "sub": "",
+   "type": "static",
+   "worstMs": 19.1
+  },
+  {
+   "avgMs": 12.47,
+   "cond": {
+    "atEnd": "hour=12.008 wx=Clear:1.00 npcs=3 near=BP_MS10CheydinhalHouseGuard01@122863,89512;BP_CheydinhalGuardCityPatrolNight01@122296,88030;BP_AldosOthran@121396,88125",
+    "atSet": "hour=12.000 wx=Clear:1.00",
+    "flipped": 1,
+    "hour": "12",
+    "pinned": true,
+    "timescale": "1",
+    "weather": "Clear"
+   },
+   "cpuLoad": 50.2,
+   "fps": 80.2,
+   "frames": 1604,
+   "gpuLoad": 98.7,
+   "hitchMs": 0,
+   "hitches": 0,
+   "hour": "12.01",
+   "id": "chapel-square-noon",
+   "level": "L_CheydinhalWorld",
+   "longestGapMs": 15.4,
+   "low01": 69.3,
+   "low1": 73.9,
+   "over100": 0,
+   "over250": 0,
+   "over50": 0,
+   "p50Ms": 12.46,
+   "p95Ms": 13.16,
+   "p999Ms": 14.43,
+   "p99Ms": 13.54,
+   "seconds": 20.0,
+   "sub": "",
+   "type": "static",
+   "worstMs": 15.4
+  }
+ ],
+ "start": "fresh",
+ "time": "2026-11-07 11:58:46",
+ "warnings": []
+}

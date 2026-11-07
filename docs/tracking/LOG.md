@@ -5,6 +5,41 @@ Investigations: [investigations.md](investigations.md).
 
 ## 2026-11-07
 
+### Crash fixed: clang-cl `/EHsc` dropped `__try` handlers (branch `crashfix`, DLL `c1b57556`)
+- The crash was at `VERSION+0x19fcd` = `ExecHook` in `diagnostics/tick_split.cpp:347`: `ProbeKind` read a stale
+  `tf+0x28` target.
+- Its `__try` had been compiled out: clang-cl `/EHsc` drops SEH scopes that contain only loads. MSVC keeps them.
+- `build-dll.sh` now uses `/EHa`, so 486 functions carry handlers. It also emits a PDB and a map file;
+  `linux/symbolize.sh` reads them.
+- The new `seh_probe` self-test check fails the build if the flag ever regresses. Self-test: 1612/0.
+- Still open: one read in `ClassOf` (`obj+0x10`) sits outside its `__try`.
+
+### First old-engine (OT) profile, live (`dll2-diag`, Cheydinhal chapel square + canal, own settings)
+The OT is **not the limit** in town at these settings.
+
+| Measure | Value |
+|---|---|
+| OT cycle | 13.8 ms |
+| Busy | 3.5 ms (25%) |
+| Idle, waiting on the game thread | 10.3 ms (75%) |
+| Busy time: `pl_update` (ProcessLists::Update) | 2.3 ms |
+| Busy time: `lvl_high` (high-process AI) | 2.1 ms |
+| Busy time: `lvl_low` | 0.24 ms |
+| Busy time: water | 0.2 ms |
+| Busy time: other, untimed (includes the Havok step) | 0.9 ms |
+| Slow OT cycles (≥10 ms) | 4 of 3628, worst 42.6 ms |
+
+- fps: chapel square 80.2, canal 64.5. GPU 98–99%, 0 hitches.
+- Consequence: OT parallelisation (C1–C3) won't raise average fps here. It can only help OT spikes: cell crossings,
+  crowds, saves. Next profiles should be travel (`silver-road`), crowds (`actors`) and saves.
+
+### Shader gate did not trigger in benchmark runs
+- The runner starts a new game with `coc`, which bypasses the menu-load path the gate watches. The log said "never
+  needed, play has begun". The precompile finished IN PLAY at +53 s.
+- Testing the normal Continue path next (`dll3-gate-doors`).
+- If the gate works there, the runner should use Continue too, or the gate should also cover `coc` loads.
+
+
 ### First live run of the merged Linux-built DLL: crash 25 s after launch
 - DLL `9608de6e`, with `OtProfile=1`, `OsPageCacheTrace=1` and `--diag`.
 - The game crashed right after a burst of NPC create commands at the start of a new game.
