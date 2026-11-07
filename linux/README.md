@@ -203,7 +203,7 @@ linux/dev-cycle.sh --bench --scenario showcase [--scenes a,b] [--rounds 2] [--in
 
 `selftest.sh` runs headless (no `DISPLAY`, Wine's display drivers disabled, crash dialog off) in a throwaway prefix
 (`~/.cache/oblivion-perffix/wineprefix`, `OPF_WINEPREFIX`); it uses `wine` from `PATH`, else nixpkgs' `wineWow64Packages.stable`.
-Its log is `build-linux/test/selftest.log`. Wine does not relocate an exe mapped with `LoadLibraryEx`, so the self-test
+Its console output is `build-linux/test/selftest.out.log` (the DLL's own log: `selftest.log`). Wine does not relocate an exe mapped with `LoadLibraryEx`, so the self-test
 is linked at `/BASE:0x1C0000000` to leave the game exe its preferred base (0x140000000); without that every scan of
 `.rdata` pointers fails.
 

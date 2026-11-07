@@ -8,7 +8,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import fixini, scenario, spin
+from . import dllvariant, fixini, scenario, spin
 from .paths import REPO
 from .runner import Options, Runner
 
@@ -83,6 +83,9 @@ class SpinRunner(Runner):
 
     def check_variants(self, scn):
         o = self.o
+        dllvariant.check(o.dll, o.dll_ini)
+        if o.dll and o.fix == "off":
+            raise RuntimeError("--dll with --fix off: the DLL would not be loaded")
         if o.fix == "off" and any(v.kind == "ini" for v in o.variants):
             raise spin.SpinError("ini variants need the fix DLL loaded")
         if any(v.kind == "ini" for v in o.variants):
