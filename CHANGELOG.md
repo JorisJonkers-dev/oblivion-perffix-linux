@@ -9,6 +9,16 @@ Downloads, checksums and build attestations: https://github.com/LTSharpe/Oblivio
 Bug fixes say whose bug it was: **game bug** = also happens without OblivionPerfFix (in the game, its engine or a
 driver library); **our bug** = caused by an earlier version of OblivionPerfFix.
 
+## Unreleased
+
+- **New diagnostics `OtProfile` and `OtCrashContext`** (off; for finding what the game's old engine thread spends its
+  frame on, and which stage it was in when it crashed). They only read the clock and the game's own stage number:
+  nothing the game does changes. `OtProfile=1` at start-up writes `OblivionPerfFix-otprofile.csv` (slow frames and
+  2-second totals: busy vs waiting for the main thread, and the time of the character passes, the cell grid, doors, water and
+  saving; `tools/ot_profile.py` ranks it). `OtCrashContext=1` adds the stage, the last stages and the fault address to
+  `OblivionPerfFix.log` when that thread faults, and leaves the exception alone. Keys `OtProfileMs` and `OtProfileSampleHz`.
+  Start-up, then live; nothing is installed when both are 0.
+
 ## 1.2.4-beta
 For Oblivion Remastered, Steam build 19115871 (Game Pass experimental). Thanks to Mishu117 for pull requests #33, #34,
 #35 and #36, to mkusm for pull request #31, to solir2 for the ROG Ally report, and to everyone who reported results and

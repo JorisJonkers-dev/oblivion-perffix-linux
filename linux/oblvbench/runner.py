@@ -1148,7 +1148,8 @@ class Runner:
                 copied.append(name)
         self.result["diagFiles"] = copied
         jobs = [("OblivionPerfFix-ledger.csv", "stutter_ledger.py", ["--ignore-focus"]),
-                ("OblivionPerfFix-ticksplit.csv", "tick_split.py", [])]
+                ("OblivionPerfFix-ticksplit.csv", "tick_split.py", []),
+                ("OblivionPerfFix-otprofile.csv", "ot_profile.py", [])]   # OtProfile=1 (--fix-ini OtProfile=1)
         rng = None
         if "OblivionPerfFix-ledger.csv" in copied:
             rng = diagwin.ledger_range((out / "OblivionPerfFix-ledger.csv").read_text(errors="replace"),

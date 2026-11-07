@@ -131,6 +131,10 @@ Config LoadConfig(const wchar_t* iniPath)
     c.gpuSceneParallelUpload = get(L"Fixes", L"GpuSceneParallelUpload", c.gpuSceneParallelUpload) != 0;
     c.hitchLedger = get(L"Fixes", L"HitchLedger", c.hitchLedger) != 0;
     c.hitchLedgerMs = get(L"Fixes", L"HitchLedgerMs", c.hitchLedgerMs);
+    c.otProfile = get(L"Fixes", L"OtProfile", c.otProfile) != 0;
+    c.otProfileMs = get(L"Fixes", L"OtProfileMs", c.otProfileMs);
+    c.otProfileSampleHz = get(L"Fixes", L"OtProfileSampleHz", c.otProfileSampleHz);
+    c.otCrashContext = get(L"Fixes", L"OtCrashContext", c.otCrashContext) != 0;
     c.hitchLedgerTickSplit = get(L"Fixes", L"HitchLedgerTickSplit", c.hitchLedgerTickSplit) != 0;
     c.vtStreamingUploads = get(L"Fixes", L"VtStreamingUploads", c.vtStreamingUploads);
     c.doorDiag = get(L"Fixes", L"DoorDiag", c.doorDiag) != 0;

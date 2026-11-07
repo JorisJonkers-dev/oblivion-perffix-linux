@@ -160,7 +160,8 @@ def parse_overrides(items):
 
 
 DIAG_KEYS = {"HitchLedger": "1", "HitchLedgerTickSplit": "1"}
-DIAG_FILES = ("OblivionPerfFix-ledger.csv", "OblivionPerfFix-ticksplit.csv", "OblivionPerfFix.log")
+DIAG_FILES = ("OblivionPerfFix-ledger.csv", "OblivionPerfFix-ticksplit.csv", "OblivionPerfFix-otprofile.csv",
+              "OblivionPerfFix.log")
 
 
 def write_stock_ini(ini_path, guard):
