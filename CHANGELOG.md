@@ -11,6 +11,13 @@ driver library); **our bug** = caused by an earlier version of OblivionPerfFix.
 
 ## Unreleased
 
+- **New `PsoRecordReplay` (off until measured; `PsoRecordMaxMB`):** records the pipeline states the game creates during
+  play (device vtable hooks on CreateGraphicsPipelineState, CreateComputePipelineState, ID3D12Device2::CreatePipelineState
+  and CreateRootSignature) into `OblivionPerfFix-psorecord.bin` next to the DLL (local only, never shipped) and replays them
+  on worker threads at the next start while the shader gate holds the first load, so the driver stack compiles and caches
+  them before play. `[psorec] in play: N new PSOs, total X ms, max Y ms` every 60 s of play counts the runtime compiles
+  (`PsoRecordReplay=2`: measure only). Needs `PsoPrecompileFast` (its "in play" signal). Self-test: serialisation round trip,
+  dedup, size bound, torn tail, hooks on a fake device.
 - **ShaderGateBeforePlay never held a Continue or new-game load (our bug, Wine/Proton):** after the main menu closes, a
   save load or `coc` shows no menu and no loading freeze for 4-5 s before the fade gate is armed; the "play has begun"
   check (3 s without any freeze) took that calm for play, so the first gate tick found "play begun" and let the load

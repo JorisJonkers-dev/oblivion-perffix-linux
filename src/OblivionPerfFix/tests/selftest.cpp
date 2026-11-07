@@ -573,6 +573,7 @@ static uint64_t HashWords(uint64_t seed, const void* data, size_t bytes)
 #include "selftest_cellbuf.h"      // CellBufferPacedEvict's shapes, the clamp stub and the buffer LRU with and without the fix
 #include "selftest_vramcounter.h"  // VramCounterFix: the Show VRAM counter
 #include "selftest_shaderscreen.h"  // ShaderScreenAfterDriverChange
+#include "selftest_psorecord.h"    // PsoRecordReplay: serialisation round trip, dedup, bounds, vtable hooks on a fake device
 #include "selftest_doordiag.h"     // diagnostic DoorDiag: sites (locate only)
 #include "selftest_streamload.h"   // StreamBehindLoadingScreen: sites (locate only)
 #include "selftest_ledger.h"       // diagnostic HitchLedger: sites, record/ring/csv format, cost per frame
@@ -2596,6 +2597,8 @@ int wmain(int argc, wchar_t** argv)
     vramc::Run(game);
     // ShaderScreenAfterDriverChange (selftest_shaderscreen.h).
     shs::Run(game);
+    // PsoRecordReplay (selftest_psorecord.h).
+    psr::Run();
     // Diagnostic OtProfile / OtCrashContext (selftest_otprofile.h): after every fix that reads the OT frame's call sites.
     otp::Run(game);
 

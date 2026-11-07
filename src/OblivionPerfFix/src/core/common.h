@@ -292,6 +292,10 @@ struct Config {
     bool vramCounterFix = true;        // VramCounterFix: the Graphics page's "Show VRAM" counter shows the game's video
                                        // memory use and budget instead of 0/0 (game bug; start-up install, live)
     int shaderGateBeforePlay = 1;        // ShaderGateBeforePlay: 0 off, 1 on under Wine/Proton only, 2 everywhere (live)
+    int psoRecordReplay = 0;             // PsoRecordReplay: 0 off, 1 record the pipelines created in play and replay them behind the loading screen, 2 measure only
+    int psoRecordMaxMB = 128;            // PsoRecordMaxMB: the record file's size limit
+    int psoRecordMinMs = 0;              // not in the shipped ini: only pipelines whose creation took this long are recorded (0 = all)
+    int psoReplayThreads = 3;            // not in the shipped ini: replay worker threads (1-8)
     int shaderGateMaxSeconds = 600;      // ShaderGateMaxSeconds: the longest the first load is held
     bool shaderScreenLinux = true;       // ShaderScreenLinuxFingerprint: under Wine the shader screen also follows Mesa, vkd3d-proton, Wine
                                          // and the shader caches (not only DXGI's constant driver version)
@@ -1013,6 +1017,20 @@ void PsoPrecompileTestTiming(uint32_t fastMaxMs, uint32_t driverRetryMs);  // se
 void SetPsoPrecompileFastBudget(float ms, int coldQueue);  // live: render-thread ms per frame at the faster pace; the queue that
                                                            // means a cold driver cache (0: no cold-cache guard at all)
 void PsoPrecompileTestStatics(uint32_t* batchSize, float* batchTime, int64_t* active);  // self-test: fakes for the statics
+// pso_replay.cpp (PsoRecordReplay)
+void PsoRecordTick(int mode, int maxMB, int minMs, int threads, const wchar_t* dir);  // monitor thread, once a second
+bool PsoReplayBusy();    // the replay is creating pipelines (ShaderGateBeforePlay waits for it)
+bool PsoPlayStarted();   // pso_precompile.cpp: play has been seen (needs PsoPrecompileFast installed)
+struct PsoRecordCounts {
+    uint64_t calls, newPsos, recorded, skipped, rsKnown, loaded, replayed, replayFailed, fileBytes, replayedSeen;
+    bool full;
+};
+void PsoRecordTestSetPlay(int v);   // self-tests: -1 ask PsoPlayStarted, 0/1 forced
+bool PsoRecordTestAttach(void* device, const wchar_t* path, int mode, int maxMB, int minMs, int threads);
+void PsoRecordTestFlush();
+bool PsoRecordTestWait(uint32_t ms);
+void PsoRecordTestReset();
+PsoRecordCounts PsoRecordTestCounts();
 void SetShaderGate(bool on, uint32_t maxSeconds);  // live: ShaderGateBeforePlay effective (needs the gate slot hook), the cap in seconds
 bool ShaderGateOn();
 bool ShaderGateHooked();                      // stream_behind_loading.cpp: the fade gate's tick goes through ShaderGateHoldsTick

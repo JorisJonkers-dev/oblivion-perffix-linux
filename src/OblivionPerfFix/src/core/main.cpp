@@ -228,6 +228,7 @@ DWORD WINAPI MonitorThread(LPVOID)
                                    cfg.psoPrecompileColdQueue < 0 ? 0 : cfg.psoPrecompileColdQueue);
         SetPsoColdGuardWine(cfg.psoColdGuardWine);
         SetShaderGate(ShaderGateWanted(cfg) && ShaderGateHooked(), static_cast<uint32_t>(cfg.shaderGateMaxSeconds));  // ShaderGateBeforePlay: live once its hook is in
+        PsoRecordTick(cfg.psoRecordReplay, cfg.psoRecordMaxMB, cfg.psoRecordMinMs, cfg.psoReplayThreads, Directory(g_iniPath).c_str());  // PsoRecordReplay (no-op at 0)
         PsoPrecompileWatchDriver();  // the cold-cache guard's driver-thread reading (no-op unless installed and precompiling)
         SetAnimTeardownParallel(ParallelHelpersAllowed(cfg) ? cfg.animTeardownParallel : 0);    // AnimTeardownParallel: no-op unless installed at start-up
         SetCellBufferPacedEvict(cfg.cellBufferPacedEvict);    // CellBufferPacedEvict: no-op unless installed at start-up

@@ -114,6 +114,10 @@ Config LoadConfig(const wchar_t* iniPath)
     c.shaderScreenLinux = get(L"Fixes", L"ShaderScreenLinuxFingerprint", c.shaderScreenLinux) != 0;
     c.shaderGateBeforePlay = get(L"Fixes", L"ShaderGateBeforePlay", c.shaderGateBeforePlay);
     if (c.shaderGateBeforePlay < 0 || c.shaderGateBeforePlay > 2) c.shaderGateBeforePlay = 1;
+    c.psoRecordReplay = get(L"Fixes", L"PsoRecordReplay", c.psoRecordReplay);
+    c.psoRecordMaxMB = get(L"Fixes", L"PsoRecordMaxMB", c.psoRecordMaxMB);
+    c.psoRecordMinMs = get(L"Fixes", L"PsoRecordMinMs", c.psoRecordMinMs);
+    c.psoReplayThreads = get(L"Fixes", L"PsoReplayThreads", c.psoReplayThreads);
     c.shaderGateMaxSeconds = get(L"Fixes", L"ShaderGateMaxSeconds", c.shaderGateMaxSeconds);
     if (c.shaderGateMaxSeconds < 10) c.shaderGateMaxSeconds = 10;
     if (c.shaderGateMaxSeconds > 3600) c.shaderGateMaxSeconds = 3600;
