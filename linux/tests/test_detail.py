@@ -157,7 +157,8 @@ class AnalyseTest(unittest.TestCase):
         self.assertEqual(a["detailAt1s"], 0.2)
         self.assertEqual(a["detailAt2s"], 0.2)
         self.assertEqual(a["detailAt4s"], 0.6)
-        self.assertEqual(a["detailFinal"], 100)
+        self.assertAlmostEqual(a["detailFinal"], 100 / 120.0 ** 2 * 1000, places=3)
+        self.assertEqual(a["detailFinalRaw"], 100)
 
     def test_faster_detail_settles_sooner(self):
         slow = detail.analyse(series_of(lambda t: 100 if t >= 8 else 30))
@@ -184,7 +185,7 @@ class AnalyseTest(unittest.TestCase):
         # black for 2 s (sharpness 0), sharp from the end of the fade; the mean rises 0 -> 120 over 1 s
         mean = lambda t: 0.0 if t < 2 else min(120.0, 120 * (t - 2))
         a = detail.analyse(series_of(lambda t: 0 if t < 2.5 else 100, mean=mean))
-        self.assertEqual(a["detailFadeS"], 3.0)      # 108 of 120 reached at 2.9 s
+        self.assertEqual(a["detailBrightStableS"], 3.0)      # within 3 % of 120 from 3.0 s, for 1 s
         self.assertEqual(a["detailSettleS"], 0.0)
         self.assertEqual(a["detailAt1s"], 1.0)
 
@@ -192,6 +193,92 @@ class AnalyseTest(unittest.TestCase):
         self.assertTrue(detail.analyse(series_of(lambda t: 0, mean=lambda t: 0.0))["detailBlack"])
         self.assertNotIn("detailSettleS", detail.analyse([(0, 5, 100)]))
         self.assertEqual(detail.analyse([])["detailSamples"], 0)
+
+
+def scaled(img, k):
+    return [[min(255, int(round(v * k))) for v in row] for row in img]
+
+
+class BrightnessInvariantTest(unittest.TestCase):
+    def norm(self, img, masks=None):
+        f = frame_of(img)
+        return detail.normalised(detail.sharpness(f, masks), detail.mean_luma(f))
+
+    def test_same_picture_at_other_brightness(self):
+        img = noise_image(160, 90, 3)
+        base = self.norm(img)
+        for k in (0.5, 0.7, 1.15):
+            self.assertAlmostEqual(self.norm(scaled(img, k)) / base, 1.0, delta=0.06, msg=k)
+        raw = [detail.sharpness(frame_of(scaled(img, k))) for k in (0.5, 1.0)]
+        self.assertLess(raw[0], raw[1] * 0.35)                # the raw metric alone reads dark as blurry
+
+    def test_blur_still_lowers_it(self):
+        img = noise_image(160, 90, 4)
+        n = [self.norm(blur(img, p)) for p in (0, 1, 3)]
+        self.assertGreater(n[0], n[1] * 2)
+        self.assertGreater(n[1], n[2] * 1.5)
+        dark_blur = self.norm(scaled(blur(img, 1), 0.5))      # blurred and dark is still below sharp and bright
+        self.assertLess(dark_blur, n[0] / 2)
+
+    def test_black_is_none(self):
+        self.assertIsNone(detail.normalised(5.0, 0.5))
+        self.assertIsNone(detail.normalised(None, 100))
+
+    def test_fade_does_not_read_as_blur(self):
+        # same texture, brightness ramping up for 3 s then constant: raw sharpness ~ mean^2
+        mean = lambda t: min(120.0, 20 + 100 * t / 3)
+        a = detail.analyse(series_of(lambda t: 0.5 * mean(t) ** 2, mean=mean))
+        self.assertEqual(a["detailSettleS"], 0.0)
+        self.assertEqual(a["detailAt1s"], 1.0)
+        self.assertAlmostEqual(a["detailBrightStableS"], 3.0, delta=0.5)
+
+
+class BrightStableTest(unittest.TestCase):
+    def test_needs_one_second_hold(self):
+        # a stale bright frame (old scene) before a dark gap does not count; the first 1 s hold at the final level does
+        means = {0.0: 120, 0.5: 120, 1.0: 5, 1.5: 40, 2.0: 80}
+        mean = lambda t: means.get(t, 120.0)
+        a = detail.analyse(series_of(lambda t: 0.5 * mean(t) ** 2, mean=mean, secs=8))
+        self.assertEqual(a["detailBrightStableS"], 2.5)
+
+    def test_slow_adaptation_starts_late(self):
+        mean = lambda t: 100.0 if t < 4 else 110.0 if t < 6 else 118.0
+        a = detail.analyse(series_of(lambda t: 0.5 * mean(t) ** 2, mean=mean, secs=10))
+        self.assertEqual(a["detailBrightStableS"], 6.0)      # 118 +-3 %, 110 is out of it
+        self.assertEqual(a["detailSettleAbsS"], 6.0)
+
+    def test_settle_counts_from_stable(self):
+        mean = lambda t: 0.0 if t < 1 else 120.0
+        def sharp(t):
+            return 0 if t < 1 else 0.5 * 120 ** 2 * (0.3 if t < 3 else 1.0)
+        a = detail.analyse(series_of(sharp, mean=mean, secs=10))
+        self.assertEqual(a["detailBrightStableS"], 1.0)
+        self.assertEqual(a["detailSettleS"], 2.0)
+        self.assertEqual(a["detailSettleAbsS"], 3.0)
+
+    def test_never_stable_falls_back(self):
+        mean = lambda t: 50.0 + 10 * t                        # keeps climbing
+        a = detail.analyse(series_of(lambda t: mean(t) ** 2, mean=mean, secs=6))
+        self.assertTrue(a["detailBrightUnstable"])
+        self.assertIn("detailBrightStableS", a)
+
+    def test_old_result_without_new_fields_loads_and_reanalyses(self):
+        old = {"id": "inn-door/enter", "type": "door", "frames": 10, "detailSamples": 4, "detailFadeS": 0.5,
+               "detailFinal": 336.69, "detailSettleS": 2.0, "detailAt1s": 0.03}
+        self.assertIs(detail.redetail(old), old)             # no series: unchanged
+        series = [[round(t, 2), round(0.5 * m * m, 2), m] for t, m in
+                  [(0.5, 45.0), (1.0, 0.1), (1.5, 7.0), (2.0, 20.0)] + [(2.5 + 0.5 * i, 50.0) for i in range(12)]]
+        new = detail.redetail(dict(old, detailSeries=series))
+        self.assertEqual(new["detailBrightStableS"], 2.5)
+        self.assertEqual(new["detailSettleS"], 0.0)
+        self.assertEqual(new["id"], "inn-door/enter")
+        self.assertEqual(len(new["detailSeries"]), len(series))
+        self.assertNotEqual(new["detailAt1s"], 0.03)
+
+    def test_series_with_extra_field_and_none(self):
+        series = [(0.5 * i, None if i == 3 else 100.0, 100.0, 1.0) for i in range(14)]
+        a = detail.analyse(series)
+        self.assertEqual(a["detailSettleS"], 0.0)
 
 
 if __name__ == "__main__":

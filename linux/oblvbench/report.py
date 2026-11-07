@@ -18,12 +18,23 @@ METRICS = [  # key, title, format, higher is better
     ("gpuLoad", "GPU %", "{:.0f}", None),
 ]
 NOISE_PCT = 5.0
+TIME_KEYS = ("detailBrightStableS", "detailSettleS", "detailSettleAbsS")
 DETAIL_METRICS = [  # key, title, format, higher is better
+    ("detailBrightStableS", "brightness stable s", "{:.1f}", False),
     ("detailSettleS", "sharp after s", "{:.1f}", False),
+    ("detailSettleAbsS", "sharp at s (from arrival)", "{:.1f}", False),
     ("detailAt1s", "sharpness at 1 s", "{:.2f}", True),
     ("detailAt2s", "at 2 s", "{:.2f}", True),
     ("detailAt4s", "at 4 s", "{:.2f}", True),
 ]
+
+
+def _dget(row, key):
+    """A detail value; results from before the brightness-stable start only have detailFadeS."""
+    v = row.get(key)
+    if v is None and key == "detailBrightStableS":
+        v = row.get("detailFadeS")
+    return v
 
 
 def _fmt(fmt, v):
@@ -59,12 +70,13 @@ def run_report(r):
                            f"{_fmt('{:.1f}', s.get('afterWorstMs'))} |")
     det = [s for s in rows if "detailSamples" in s]
     if det:
-        out += ["", "Detail arrival (time counted from the end of the fade-in; sharpness relative to the final value):", "",
-                "| scene | samples | fade-in ends s | " + " | ".join(m[1] for m in DETAIL_METRICS) + " |",
-                "|---|---:|---:|" + "---:|" * len(DETAIL_METRICS)]
+        out += ["", "Detail arrival (brightness-normalised sharpness; 'sharp after' counts from the moment the brightness is "
+                "stable, 'sharp at' from the arrival; sharpness relative to the final value):", "",
+                "| scene | samples | " + " | ".join(m[1] for m in DETAIL_METRICS) + " |",
+                "|---|---:|" + "---:|" * len(DETAIL_METRICS)]
         for s in det:
-            out.append(f"| {s['id']} | {s['detailSamples']} | {_fmt('{:.1f}', s.get('detailFadeS'))} | "
-                       + " | ".join(_fmt(f, s.get(k)) for k, _, f, _ in DETAIL_METRICS) + " |")
+            out.append(f"| {s['id']} | {s['detailSamples']} | "
+                       + " | ".join(_fmt(f, _dget(s, k)) for k, _, f, _ in DETAIL_METRICS) + " |")
     if r.get("warnings"):
         out += ["", "## Warnings", ""] + [f"- {w}" for w in r["warnings"]]
     out += ["", "A hitch is a frame longer than max(2 x the scene's median, 40 ms); 1% / 0.1% low = 1000 / the 99th / "
@@ -128,8 +140,8 @@ def compare(runs_a, runs_b, name_a="A", name_b="B"):
             row[key] = {"a": ma, "b": mb, "deltaPct": None if d is None else round(d, 1),
                         "noise": d is not None and abs(d) < NOISE_PCT, "aRuns": va, "bRuns": vb}
         for key, _, _, _ in DETAIL_METRICS:
-            va = [s.get(key) for s in a[sid]]
-            vb = [s.get(key) for s in b[sid]]
+            va = [_dget(s, key) for s in a[sid]]
+            vb = [_dget(s, key) for s in b[sid]]
             ma, mb = _median(va), _median(vb)
             if ma is None and mb is None:
                 continue
@@ -171,8 +183,9 @@ def compare_markdown(cmp, runs_a, runs_b):
     dets = {sid: row["detail"] for sid, row in cmp["scenes"].items() if row.get("detail")}
     if dets:
         out += ["", "## Detail arrival (time to sharp textures)", "",
-                f"Median of the runs, {a} -> {b} (change). Times run from the end of the fade-in; the sharpness at "
-                "1 / 2 / 4 s is relative to the final value (1.00 = already sharp). Lower time and higher sharpness "
+                f"Median of the runs, {a} -> {b} (change). The sharpness is Laplacian variance over mean luminance squared. "
+                "'Sharp after' runs from the moment the brightness is stable (within 3 % of its final value for 1 s), "
+                "'sharp at' from the arrival; the sharpness at 1 / 2 / 4 s is relative to the final value (1.00 = already sharp). Lower time and higher sharpness "
                 "are better.", "",
                 "| scene | " + " | ".join(t for _, t, _, _ in DETAIL_METRICS) + " |",
                 "|---|" + "---|" * len(DETAIL_METRICS)]
@@ -183,8 +196,9 @@ def compare_markdown(cmp, runs_a, runs_b):
                 if not c or c["a"] is None or c["b"] is None:
                     cells.append("-" if not c else f"{_fmt(f, c['a'])} -> {_fmt(f, c['b'])}")
                     continue
-                unit = " s" if k == "detailSettleS" else ""
-                chg = f"{c['delta']:+.1f} s" if k == "detailSettleS" else (
+                secs = k in TIME_KEYS
+                unit = " s" if secs else ""
+                chg = f"{c['delta']:+.1f} s" if secs else (
                     f"{c['deltaPct']:+.0f}%" if c["deltaPct"] is not None else "")
                 cells.append(f"{f.format(c['a'])} -> {f.format(c['b'])}{unit} ({chg})")
             out.append(f"| {sid} | " + " | ".join(cells) + " |")
@@ -206,3 +220,27 @@ def write_comparison(runs_a, runs_b, name_a, name_b, results_dir, label="report"
                                                    runsB=[str(p) for p, _ in runs_b]), indent=1))
     (d / "report.md").write_text(compare_markdown(cmp, runs_a, runs_b))
     return d
+
+
+def redetail_runs(runs):
+    """[(dir, result)] -> the same with every scene's detail keys recomputed from its stored detailSeries
+    (the current analysis: brightness-normalised, timing from brightness-stable). Inputs are not changed."""
+    from . import detail
+    out = []
+    for d, r in runs:
+        r2 = dict(r, scenes=[detail.redetail(s) for s in r.get("scenes") or []])
+        out.append((d, r2))
+    return out
+
+
+def write_redetail(runs, results_dir):
+    """Write each re-analysed run to results/<its folder name>-redetail/ (result.json + report.md); returns the
+    new [(dir, result)] list."""
+    out = []
+    for d, r in redetail_runs(runs):
+        nd = Path(results_dir) / (Path(d).name + "-redetail")
+        nd.mkdir(parents=True, exist_ok=True)
+        (nd / "result.json").write_text(json.dumps(r, indent=1))
+        (nd / "report.md").write_text(run_report(r))
+        out.append((nd, r))
+    return out

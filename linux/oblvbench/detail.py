@@ -1,8 +1,10 @@
 """Detail arrival: how long after a door / fast travel the textures are sharp.
 
 FPS cannot show it, so the runner grabs the game window every `interval` s after the arrival and measures how sharp
-the picture is (variance of the Laplacian of the luminance, HUD and overlay masked). The series says when the picture
-stops getting sharper (`detailSettleS`) and how sharp it already was after 1 / 2 / 4 s relative to the end.
+the picture is (variance of the Laplacian of the luminance, HUD and overlay masked, divided by the squared mean
+luminance so that a fade or eye adaptation does not read as blur). Timing starts when the brightness is stable
+(`detailBrightStableS`); the series then says when the picture stops getting sharper (`detailSettleS`) and how sharp it
+already was after 1 / 2 / 4 s relative to the end.
 
 Capture: `xdotool search --name 'Oblivion Remastered'` finds the XWayland window, `xwd -id <win> -silent` dumps it,
 the XWD is parsed here (stdlib only) and block-averaged down to ~640 px wide on the green channel. Sums over a block
@@ -21,7 +23,10 @@ OVERLAY_MASK = (0.0, 0.0, 0.25, 0.15)         # MangoHud's fps counter, top left
 CROP = 0.10                                    # the outer 10 % of every side is ignored (vignette, HUD edges)
 SETTLE_TOL = 0.03
 FINAL_TAIL_S = 2.0
-FADE_FRACTION = 0.9
+FADE_FRACTION = 0.9                            # fallback only: brightness never held still
+STABLE_TOL = 0.03                              # brightness stable: within 3 % of the final mean ...
+STABLE_HOLD_S = 1.0                            # ... for this long
+MIN_MEAN = 2.0
 WINDOW_NAME = "Oblivion Remastered"
 
 
@@ -157,47 +162,95 @@ def _median(v):
     return statistics.median(v) if v else None
 
 
-def analyse(series, tol=SETTLE_TOL, tail=FINAL_TAIL_S):
-    """series: [(t, sharpness, mean luminance)] with t in seconds since the capture began (the arrival).
-    The fade-in is over at the first sample whose mean luminance reaches 90 % of the final median; times below are
-    counted from there. detailSettleS: the first time from which the sharpness stays within `tol` of the median of
-    the last `tail` s; detailAt1s/2s/4s: the sharpness at that time relative to that final value."""
-    pts = [(t, s, m) for t, s, m in series if s is not None]
-    out = {"detailSamples": len(series)}
-    if len(pts) < 4:
-        return out
+def normalised(sharp, mean):
+    """Brightness-invariant sharpness: the Laplacian variance over the squared mean luminance, times 1000.
+    The Laplacian is linear in the picture's gain, so its variance scales with brightness squared; dividing by the
+    squared mean removes a fade, an eye-adaptation swing or a different exposure. None for a (near) black picture."""
+    if sharp is None or mean is None or mean < MIN_MEAN:
+        return None
+    return 1000.0 * sharp / (mean * mean)
+
+
+def bright_stable_time(pts, final_mean, hold=STABLE_HOLD_S, tol=STABLE_TOL):
+    """pts: [(t, norm, mean, raw)]. First sample time t from which every sample in [t, t + hold] has a mean luminance within
+    `tol` of the final one (the last samples' median): the fade and the eye adaptation are over. None when the
+    series never holds that long."""
     tmax = pts[-1][0]
-    tailp = [p for p in pts if p[0] >= tmax - tail] or pts[-1:]
-    final_mean = _median([p[2] for p in tailp])
+    for t, *_ in pts:
+        if t + hold > tmax + 1e-9:
+            break
+        win = [m for u, _, m, _ in pts if t <= u <= t + hold]
+        if len(win) >= 2 and all(abs(m - final_mean) <= tol * final_mean for m in win):
+            return t
+    return None
+
+
+def analyse(series, tol=SETTLE_TOL, tail=FINAL_TAIL_S):
+    """series: [(t, raw sharpness, mean luminance)] (extra fields are ignored) with t in seconds since the capture
+    began (the arrival). The sharpness is normalised by the mean luminance squared (`normalised`).
+    Timing starts when the brightness is stable (detailBrightStableS, from the arrival: the mean luminance stays within
+    3 % of its final value for 1 s). Then detailSettleS: the first time (from that start) from which the normalised
+    sharpness stays within `tol` of the median of the last `tail` s; detailSettleAbsS the same from the arrival;
+    detailAt1s/2s/4s: the sharpness at that time relative to that final value. Old results (without these keys) stay
+    readable: nothing here is needed to load them."""
+    out = {"detailSamples": len(series)}
+    pts = []
+    for row in series:
+        t, s, m = row[0], row[1], row[2]
+        n = normalised(s, m)
+        if n is not None:
+            pts.append((t, n, m, s))
+    allm = [row[2] for row in series if row[1] is not None]
+    if len(allm) < 4:
+        return out
+    tmax = max(row[0] for row in series if row[1] is not None)
+    tail_all = [row[2] for row in series if row[1] is not None and row[0] >= tmax - tail] or allm[-1:]
+    final_mean = _median(tail_all)
     out["detailFinalMean"] = round(final_mean, 1)
     if final_mean < 2:
         out["detailBlack"] = True                     # the capture saw nothing: no sharpness to speak of
         return out
-    origin = 0.0
-    for t, s, m in pts:
-        if m >= FADE_FRACTION * final_mean:
-            origin = t
-            break
-    out["detailFadeS"] = round(origin, 2)
-    pts = [(t - origin, s) for t, s, m in pts if t >= origin]
-    tmax -= origin
-    final = _median([s for t, s in pts if t >= tmax - tail] or [pts[-1][1]])
-    out["detailFinal"] = round(final, 2)
+    if len(pts) < 4:
+        return out
+    out["detailMetric"] = "lapvar/mean^2*1000"
+    stable = bright_stable_time(pts, final_mean)
+    if stable is None:                                # never held still for 1 s: the old 90 % rule
+        stable = next((t for t, _, m, _ in pts if m >= FADE_FRACTION * final_mean), 0.0)
+        out["detailBrightUnstable"] = True
+    out["detailBrightStableS"] = out["detailFadeS"] = round(stable, 2)
+    rest = [(t - stable, n, s) for t, n, m, s in pts if t >= stable]
+    tmax = pts[-1][0] - stable
+    last = [n for t, n, s in rest if t >= tmax - tail] or [rest[-1][1]]
+    final = _median(last)
+    out["detailFinal"] = round(final, 3)
+    out["detailFinalRaw"] = round(_median([s for t, n, s in rest if t >= tmax - tail] or [rest[-1][2]]), 2)
     if not final:
         return out
     settle = None
-    for t, s in reversed(pts):
-        if abs(s - final) <= tol * final:
+    for t, n, _ in reversed(rest):
+        if abs(n - final) <= tol * final:
             settle = t
         else:
             break
     if settle is not None:
         out["detailSettleS"] = round(settle, 2)
+        out["detailSettleAbsS"] = round(settle + stable, 2)
     for sec in (1, 2, 4):
-        before = [s for t, s in pts if t <= sec]
+        before = [n for t, n, _ in rest if t <= sec]
         if before and tmax >= sec:
             out[f"detailAt{sec}s"] = round(before[-1] / final, 3)
     return out
+
+
+def redetail(scene):
+    """Re-run the analysis on a stored scene / door leg row (its `detailSeries`) and return the row with the new
+    detail keys (the old ones removed first); rows without a series come back unchanged."""
+    ser = scene.get("detailSeries")
+    if not ser:
+        return scene
+    row = {k: v for k, v in scene.items() if not k.startswith("detail") or k == "detailSeries"}
+    row.update(analyse([tuple(x) for x in ser]))
+    return row
 
 
 # ---------------------------------------------------------------- grabbing

@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from oblvbench import envfile, fixini, game, scenario, spin, ue4ss  # noqa: E402
 from oblvbench.paths import Paths  # noqa: E402
-from oblvbench.report import load_runs, write_comparison  # noqa: E402
+from oblvbench.report import load_runs, redetail_runs, write_comparison, write_redetail  # noqa: E402
 from oblvbench.runner import Options, Runner  # noqa: E402
 from oblvbench.saves import SaveGuard  # noqa: E402
 from oblvbench.spinrunner import SpinOptions, SpinRunner  # noqa: E402
@@ -182,8 +182,15 @@ def cmd_ab(a, paths):
     return code
 
 
+def cmd_redetail(a, paths):
+    for d, _ in write_redetail(load_runs(split_list(a.runs), paths.results), paths.results):
+        say(f"REDETAIL {d}")
+
+
 def cmd_report(a, paths):
     runs_a, runs_b = load_runs(split_list(a.a), paths.results), load_runs(split_list(a.b), paths.results)
+    if a.redetail:
+        runs_a, runs_b = redetail_runs(runs_a), redetail_runs(runs_b)
     d = write_comparison(runs_a, runs_b, a.name_a, a.name_b, paths.results, a.label)
     say(f"REPORT {d / 'report.md'}")
     print((d / "report.md").read_text())
@@ -278,6 +285,10 @@ def main(argv=None):
     p.add_argument("--name-a", default="A")
     p.add_argument("--name-b", default="B")
     p.add_argument("--label", default="report")
+    p.add_argument("--redetail", action="store_true",
+                   help="recompute the detail numbers from the stored detailSeries with the current analysis")
+    p = sub.add_parser("redetail", help="re-analyse the stored detail series of runs into <run>-redetail folders")
+    p.add_argument("runs", nargs="+", help="run labels or folders (comma separated or several)")
     a = ap.parse_args(argv)
     if a.cmd == "ab":
         a.fix = a.a
@@ -291,7 +302,7 @@ def main(argv=None):
         signal.signal(sig, stop)
 
     handlers = {"setup": cmd_setup, "status": cmd_status, "restore": cmd_restore, "list": cmd_list, "run": cmd_run,
-                "ab": cmd_ab, "spin": cmd_spin, "report": cmd_report,
+                "ab": cmd_ab, "spin": cmd_spin, "report": cmd_report, "redetail": cmd_redetail,
                 "install-ue4ss": lambda a, p: installer(p).install(),
                 "remove-ue4ss": lambda a, p: installer(p).remove()}
     try:

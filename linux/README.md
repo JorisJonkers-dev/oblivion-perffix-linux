@@ -106,14 +106,28 @@ How it works: `xdotool search --name 'Oblivion Remastered'` finds the window and
 found on PATH or in `/nix/store`; `nix build nixpkgs#xdotool nixpkgs#xorg.xwd --no-link --print-out-paths`). The XWD is
 parsed in pure Python and block-averaged to about 640x360 on the green channel (about 35 ms for 2560x1440 plus the
 `xwd` run itself). Sharpness = variance of the Laplacian of that picture over its central 80 %, without the scenario's
-`masks` (HUD) and the MangoHud overlay (top left). Captures start at the detected arrival (the runner has no fade
-event): the fade-in is over at the first capture whose mean brightness reaches 90 % of its final value, and all times
-below count from there. Per leg (`result.json`, `report.md`, and the A/B report as median over the runs and change vs A):
+`masks` (HUD) and the MangoHud overlay (top left), **divided by the squared mean luminance** (times 1000). The raw
+Laplacian variance scales with brightness squared, so a fade tail or the game's eye adaptation read as "blurry"; the
+normalised value is the same for the same picture at another brightness, and blur still lowers it. Captures start at the
+detected arrival (the runner has no fade event). Timing starts when the **brightness is stable**: the first capture
+from which the mean luminance stays within 3 % of its final value (median of the last 2 s) for 1 s; if it never does,
+the old rule (90 % of the final brightness) is used and `detailBrightUnstable` is set. Per leg (`result.json`,
+`report.md`, and the A/B report as median over the runs and change vs A):
 
-- `detailSettleS`: first time from which the sharpness stays within 3 % of the median of the last 2 s;
-- `detailAt1s` / `detailAt2s` / `detailAt4s`: sharpness at that time relative to the final value (1.00 = sharp);
-- `detailFadeS` (fade-in end, from arrival), `detailFinal`, `detailSamples`, `detailSeries` (`[t, sharpness, mean]`);
+- `detailBrightStableS`: that start, from the arrival (`detailFadeS` has the same value, for older tools);
+- `detailSettleS`: first time after it from which the sharpness stays within 3 % of the median of the last 2 s;
+  `detailSettleAbsS`: the same counted from the arrival (`detailBrightStableS` + `detailSettleS`);
+- `detailAt1s` / `detailAt2s` / `detailAt4s`: sharpness at that time (from the brightness-stable start) relative to the
+  final value (1.00 = sharp);
+- `detailFinal` (normalised), `detailFinalRaw` (raw Laplacian variance), `detailMetric`, `detailSamples`, `detailSeries`
+  (`[t, raw sharpness, mean luminance]`, unchanged: the normalised value is computed from it);
 - warnings for failed captures and for black frames (`detailBlack`).
+
+Results made before this change have no `detailBrightStableS` / `detailSettleAbsS` and raw `detailFinal`; they load and
+report as before (the fade column shows `detailFadeS`). Because the series keeps raw sharpness and mean luminance, old
+runs can be re-analysed with the current method: `python3 linux/bench.py redetail <run dirs>` writes
+`results/<run>-redetail/` (result.json + report.md), and `bench.py report --a ... --b ... --redetail` makes the A/B
+report from the re-analysed series without touching the run folders.
 
 Absolute sharpness depends on the scene; only compare the same leg between sides. Don't move or cover the game window
 while it runs, and use the same window size on both sides.

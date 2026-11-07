@@ -203,6 +203,30 @@ class ReportDetailTest(unittest.TestCase):
         self.assertIn("9.0 -> 2.4 s (-6.6 s)", md)
         self.assertIn("0.25 -> 0.85", md)
 
+    def test_old_results_render_and_redetail(self):
+        old = self.run_of("o", 8.0, 0.2)
+        old["scenes"][0]["detailFadeS"] = 3.5                    # a pre-v2 result: no detailBrightStableS
+        md = report.run_report(old)
+        self.assertIn("3.5", md)
+        c = report.compare([(Path("a"), old)], [(Path("b"), old)])
+        self.assertEqual(c["scenes"]["inn-door/enter"]["detail"]["detailBrightStableS"]["a"], 3.5)
+        self.assertIn("3.5 -> 3.5 s", report.compare_markdown(c, [(Path("a"), old)], [(Path("b"), old)]))
+
+    def test_redetail_runs_and_write(self):
+        import tempfile
+        run = self.run_of("r", 8.0, 0.2)
+        run["scenes"][0]["detailSeries"] = [[0.5 * i, 0.5 * 100.0 ** 2, 100.0] for i in range(14)]
+        run["scenes"].append({"id": "plain", "type": "static", "frames": 5})
+        (d, r2), = report.redetail_runs([(Path("r"), run)])
+        self.assertEqual(r2["scenes"][0]["detailSettleS"], 0.0)
+        self.assertEqual(run["scenes"][0]["detailSettleS"], 8.0)           # the input is untouched
+        self.assertEqual(r2["scenes"][1], {"id": "plain", "type": "static", "frames": 5})
+        with tempfile.TemporaryDirectory() as tmp:
+            (nd, _), = report.write_redetail([(Path(tmp) / "run-x", run)], tmp)
+            self.assertEqual(nd.name, "run-x-redetail")
+            self.assertTrue((nd / "report.md").exists())
+            self.assertEqual(json.loads((nd / "result.json").read_text())["scenes"][0]["detailSettleS"], 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()
