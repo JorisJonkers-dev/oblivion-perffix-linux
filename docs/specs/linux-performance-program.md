@@ -68,10 +68,25 @@ Every change keeps the project's Rules: identical image and gameplay, fail-safe 
 33. As a maintainer, I want every borrowed idea credited to its author and licence, so that the project stays honest and redistributable.
 34. As a maintainer, I want Linux-specific changes kept apart from upstream's Windows tooling, so that upstream changes merge cleanly.
 35. As a maintainer, I want my findings written up so they can be reported upstream, so that Windows players benefit too.
+36. As a tuner, I want every benchmark run indexed in one generated table with its variant and key numbers, so that I can compare any run with any other later.
+37. As a tuner, I want a dated findings log with evidence links and confidence, so that lessons survive between sessions and agents.
+38. As a tuner, I want each investigation tracked with question, status and outcome, so that nothing is researched twice or forgotten.
+39. As a tuner, I want single-run results marked as indicative and conclusions backed by balanced multi-round runs, so that a regression that comes and goes (like the chapel square's) isn't mistaken for a fix or a bug.
+40. As a Linux player, I want the old engine's own work (AI, scripts, physics, cell attach) spread over helper threads where results stay the same, so that the main thread stops limiting towns and crowds.
+41. As a Linux player, I want known gameplay exploits and old gameplay bugs kept exactly as they are, so that the game plays the way I and guides expect.
+42. As a Linux player, I want the game not to slow down or crash after long sessions, so that I can play for hours without restarting.
+43. As a Linux player, I want minimising the game during start-up not to crash it, so that I can switch windows while it loads.
+44. As a Linux player, I want expensive known spots (the Brindle Home horse corral, crowds and fights) to cost less main-thread time, so that those places run smoothly.
+45. As a Linux player, I want my shader caches kept between launches on a fast filesystem, so that I don't sit through recompiles or compile stutter.
+46. As a Linux player, I want game files I'm about to need warmed into memory ahead of time, so that the NTFS drive's slower reads don't cause pop-in.
+47. As a tuner, I want to see the old engine's share of each slow frame (hitch ledger, tick split) per hotspot, so that old-engine work is aimed at the costs that are really there.
+48. As a developer, I want to build and A/B my own DLL against the installed one in one command, so that a native change is proven or rejected within minutes.
+49. As a maintainer, I want each agent working in its own git worktree, so that parallel work never mixes branches or changes code under a running benchmark.
+50. As a Linux player watching a benchmark, I want the frame-time graph on screen, so that I can see stutter with my own eyes.
 
 ## Implementation Decisions
 
-Workstreams in priority order. Each one ends with an A/B measurement through the benchmark.
+Workstreams in priority order (1–8 first, then 9–11 alongside, 12 enables faster work on 9). Each one ends with an A/B measurement through the benchmark.
 
 1. **Regression bisect at busy towns (first).**
    - Stock vs fix on the Cheydinhal chapel square showed −25% fps, 18 hitches, and GPU load falling from 97% to 88% with the fix on.
@@ -116,7 +131,32 @@ Workstreams in priority order. Each one ends with an A/B measurement through the
    - Proton's Wayland driver where it actually loads.
    - Input latency has no direct measurement in the benchmark. Use the frame-time spread and present-to-present pacing as proxies, and state that limit.
 
-8. **Native iteration.**
+9. **Old-engine parallelisation and repairs.**
+   - Map the old engine's per-frame work on its own thread from the binary and OBSE64's reverse-engineering headers:
+     process lists by AI level, the script runner, the Havok step, cell attach, pathfinding, detection, magic, and the
+     hand-off to UE.
+   - Parallelise work that is read-only or can be partitioned, with results merged in the game's order. Examples: line
+     of sight and detection queries, pathfinding queries, low-process actors, parsing cell data on a worker.
+   - Repair known freezes and crashes at their cause.
+   - Gameplay stays identical: the same order of observable effects, the same random-number draws, the same script
+     order. Every known exploit or old gameplay bug near a change is listed and kept on purpose.
+   - Each change is one ini key (default off until proven), checked by the self-test and proven by A/B at the matching
+     hotspot. Use the tick split for the old engine's share of each frame.
+
+10. **Known engine issues.**
+    - From the catalogue: long-session slowdown, crashes after 1–3 hours, the crash when minimised during start-up, the
+      corral's expensive per-frame state, crowds and fights, and visual glitches (a spell's look staying, a brightness
+      flash at menus, banners flipping detail).
+    - Each gets a reproduction scene or long spin session first, then a fix if the cause is found.
+
+11. **Tracking.**
+    - Every run is indexed by a generator into a committed table, with copies of its report and a compact result.
+    - Findings go into a dated log with evidence links and confidence.
+    - Investigations are tracked in a status table.
+    - The spec is updated as findings change scope.
+    - Each agent works in its own git worktree, and only the main session runs the game.
+
+12. **Native iteration.**
    - Cross-compile the fix DLL on Linux (clang-cl or mingw route, whichever builds the MASM stubs and SEH).
    - A thin permanent `version.dll` loader that loads a copied payload DLL and can unload and reload it on a trigger.
    - Each fix declares whether it can be uninstalled live. The ones that patch code at start-up only are reloaded only at game restart.
@@ -143,10 +183,17 @@ Linux work lives in its own directories and branches of the fork, so upstream me
 - Frame generation and upscaler swaps (OptiScaler and others), which own `version.dll` too.
 - Gameplay changes such as a larger active cell radius, unless offered as an explicit, off-by-default trade-off.
 - Character pooling or any change to actor identity.
+- Fixing gameplay exploits or old gameplay bugs. They are kept on purpose; only performance problems, hitches and crashes are fixed.
 - Windows-only tooling: PresentMon, the window-hook DLL, per-thread CPU sampling.
 - Moving the game off the shared NTFS drive. This spec only measures whether it would help.
 
 ## Further Notes
+
+Tracking:
+- `docs/tracking/LOG.md` holds findings with evidence and confidence.
+- `docs/tracking/investigations.md` holds the status of every question.
+- `docs/tracking/runs.md` indexes every benchmark run. It is generated by `linux/track.py`, with a copy of each report kept in `docs/tracking/runs/`.
+
 
 Evidence and sources live in `docs/research-linux/`:
 - `altar-architecture.md`
