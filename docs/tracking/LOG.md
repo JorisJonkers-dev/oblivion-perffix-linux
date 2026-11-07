@@ -5,6 +5,27 @@ Investigations: [investigations.md](investigations.md).
 
 ## 2026-11-07
 
+### Pause: proven fixes installed in the player's game
+- **Installed DLL:** `02144ca7` (built from `pso-replay` = docs-tracking + compressed record), as `version.dll`.
+- **ini:** the new shipped ini with `PsoRecordReplay=1`, `VtStreamingUploads=64`, `FadeVtFlushSkip=1`. Defaults otherwise
+  (`ShaderGateBeforePlay=1`, `RdgSubmitBatch=32`, diagnostics off).
+- **`OblivionPerfFix-psorecord.bin`:** 2912 pipelines, 128 MB.
+- **Steam launch option:** back to `WINEDLLOVERRIDES="version=n,b" %command%`.
+- **Backup of the original 1.2.4 DLL and ini:** `~/Projects/opf-run/backup-installed-20261107-1452/`.
+- **Check run (`installed-check`, no `--dll`):**
+  - replay 2912/2912 with 0 failures;
+  - the gate held 1.5 s and the precompile finished before play;
+  - VT uploads 64 and the VT flush skip are active;
+  - canal 71 fps with 0 hitches; IC market 88.5 fps with 1 hitch of 94 ms.
+
+### PSO replay with the compressed record (`pso-record5` → `pso-replay5`)
+- Record: 2911 pipelines, file 127.7 MB.
+- Replay: 2911/2911 with 0 failures, in 0.2 s.
+- In play during replay: 1 new PSO in 5 min; total 2.2 s against 4.2 s in the record run; max 8.9 ms; no creations
+  ≥20 ms.
+- Compression saved little: 121.7 MB of shaders. The 512 MB cap is enough for now.
+
+
 ### Turn-settle: the metric saturates at the canal; Lumen and VT variants unresolved (`spin-turn-canal2`)
 | Variant | Settle | Lighting | Pop-in | Missing regions at t=0 | fps | 0.1% low |
 |---|---|---|---|---|---|---|

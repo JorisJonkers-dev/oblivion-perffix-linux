@@ -10,9 +10,15 @@ State as of the pause on 2026-11-07. Read this first, then [LOG.md](LOG.md) (new
   `linux/results` and `linux/third_party` are symlinks to the main checkout. Run benchmarks only from here.
 - **Our DLL builds** go into `~/Projects/opf-run/build-linux/` (PDB and map file next to each DLL). Build with
   `linux/build-dll.sh` (clang-cl, `/EHa`). Self-test with `linux/selftest.sh` (headless Wine).
-- **The player's game is stock:** the installed `version.dll` is OblivionPerfFix 1.2.4 (MSVC) with the player's ini, and
-  the Steam launch option is `WINEDLLOVERRIDES="version=n,b" %command%`. Benchmarks with our DLL use `--dll` and
-  restore everything afterwards.
+- **The player's game runs OUR DLL:**
+  - `version.dll` is `02144ca7`, built from branch `pso-replay`.
+  - The ini sets `PsoRecordReplay=1`, `VtStreamingUploads=64` and `FadeVtFlushSkip=1`.
+  - `OblivionPerfFix-psorecord.bin` holds 2912 pipelines (128 MB).
+  - The Steam launch option is `WINEDLLOVERRIDES="version=n,b" %command%`.
+  - Rollback: copy `~/Projects/opf-run/backup-installed-20261107-1452/{version.dll,OblivionPerfFix.ini}` back into
+    `Binaries/Win64`, with the game closed. That is the stock 1.2.4 release.
+  - Windows uses the same folder: this clang build is untested on Windows. If Windows misbehaves, roll back.
+  - Benchmarks with `--dll` restore this installed state afterwards.
 - **For benchmarking**, set the launch option back to
   `/home/ExtraToast/Projects/oblivion-perffix-linux/linux/oblivion-launch.sh %command%` (Steam fully closed;
   `~/Projects/linux-gaming/scripts/set-launch-options.py 2623190 '...'`).
@@ -33,11 +39,10 @@ State as of the pause on 2026-11-07. Read this first, then [LOG.md](LOG.md) (new
 - **Crash fixed:** clang-cl `/EHsc` dropped `__try`; the build now uses `/EHa`.
 
 ## Open, in priority order
-1. **PSO replay with the compressed record** (DLL `02144ca7`, run `pso-record5`/`pso-replay5`):
-   - check the file size against 133.8 MB;
-   - check the cap is no longer hit;
-   - check the replay failures, which should be 0.
-   Then fps and hitches A/B on random spots, and decide whether `PsoRecordReplay=1` becomes the default.
+1. **PSO replay:**
+   - Verified: 0 failures, 1 new PSO in 5 min. It is installed for the player.
+   - Still to do: an fps and hitch A/B on random spots without `--diag`, and the turn-settle effect.
+   - Consider making it the default upstream.
 2. **Late pop-in and night lighting after turning** (owner priority):
    - the turn-settle metric saturates at busy spots. Branch `turn-settle2` (merged) only has the fast X11 capture
      (`linux/oblvbench/xcap.py`: 21 ms per grab at a centre crop of 0.5, against 109 ms with xwd), and it is not wired
