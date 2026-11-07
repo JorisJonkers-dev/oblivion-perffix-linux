@@ -11,6 +11,12 @@ driver library); **our bug** = caused by an earlier version of OblivionPerfFix.
 
 ## Unreleased
 
+- **ShaderGateBeforePlay never held a Continue or new-game load (our bug, Wine/Proton):** after the main menu closes, a
+  save load or `coc` shows no menu and no loading freeze for 4-5 s before the fade gate is armed; the "play has begun"
+  check (3 s without any freeze) took that calm for play, so the first gate tick found "play begun" and let the load
+  through while the precompile ran on. The calm now does not count as play while the gate waits for its first tick (or
+  holds); the first tick after the main menu decides (hold while the precompile runs, otherwise "nothing to wait for"),
+  and `[gate]` lines say when the menu was left and why a load was or was not held.
 - **Linux build fix (our bug, Linux/clang builds only):** `linux/build-dll.sh` compiled with `/EHsc`, so clang dropped every
   `__try/__except` that guards plain memory reads (no handler in the unwind info) and a stale pointer in `TickSplit`'s
   kind probe crashed the game (access violation in `ExecHook`). It now uses `/EHa` like the self-test, writes

@@ -133,6 +133,9 @@ std::atomic<bool> g_gateOn{false};      // ShaderGateBeforePlay (effective: on, 
 std::atomic<uint32_t> g_gateMaxSec{600};
 std::atomic<bool> g_gateHolding{false}; // the first load after the main menu is being held for the precompile
 bool g_gateDone = false;                // game thread: the hold ended (or play began): never again this session
+bool g_gateSawLoad = false;             // game thread: the first fade-gate tick after the main menu came and found nothing to wait for
+bool g_menuLeftLogged = false;          // game thread: the "main menu left, load under way" line was written
+constexpr ULONGLONG kNoGateTickMs = 60000;  // calm (no freeze at all) this long after the main menu without a gate tick: play, not a load
 ULONGLONG g_gateStart = 0, g_gateLogAt = 0, g_activeAt = 0;   // game thread (ms since install; 0: none)
 uint32_t g_gateStallMs = 45000, g_gateCapMs = 0;   // g_gateCapMs: self-test override (0: ShaderGateMaxSeconds)
                                                 // UE's queue empty this long with the flag set: not progressing, release
@@ -239,6 +242,18 @@ int InPlayNow(ULONGLONG now)
     if (named > 0) g_menuSeen = true;
     if (named == 0 && mode == 0) {
         if (!g_playSince) g_playSince = now + 1;
+        // Loading a save or a new game from the main menu shows no freeze of either kind for seconds before its gate is armed
+        // (live: 4-5 s between the menu closing and the fade-in), so that calm is not play yet. While ShaderGateBeforePlay waits
+        // for the first fade-gate tick after the menu (or holds it), play has not begun; the pace stays the menu's meanwhile.
+        const bool awaitLoad = g_gateOn.load() && g_menuSeen && !g_gateDone && (g_gateHolding.load() || (!g_gateSawLoad && now + 1 - g_playSince < kNoGateTickMs));
+        if (awaitLoad) {
+            if (!g_menuLeftLogged) {
+                g_menuLeftLogged = true;
+                Log("[gate] +%.1f s: the main menu was left (no menu or loading freeze): a load is under way; the first fade-gate tick "
+                    "decides whether it is held (precompile %s)", now / 1000.0, Precompiling() ? "running" : "not running");
+            }
+            return 0;
+        }
         if (g_menuSeen && now + 1 - g_playSince >= g_playMs) g_played = true;
         return 1;
     }
@@ -806,13 +821,18 @@ bool ShaderGateHoldsTick()
 {
     if (!g_gateOn.load() || !g_fn || g_gateDone) return false;
     if (!g_enabled.load() || g_faulted || GetCurrentThreadId() != g_gameThread || !LookGuarded()) return false;
-    if (g_played.load()) {   // play is under way (a gate released earlier, or never needed): no hold from here on
+    if (g_played.load() && !g_gateHolding.load()) {   // play is under way (a gate released earlier, or never needed): no hold from here on
         GateEnd("play has begun");
         return false;
     }
     if (!g_menuSeen) return false;   // the start-up's own transition into the main menu
     if (!Precompiling()) {
         if (g_gateHolding.load()) GateEnd("the precompile has finished");
+        else if (!g_gateSawLoad) {
+            g_gateSawLoad = true;
+            Log("[gate] +%.1f s: the first load after the main menu: the shader precompile is not running (finished), nothing to wait for",
+                Now() / 1000.0);
+        }
         return false;
     }
     const ULONGLONG now = Now();
@@ -821,6 +841,7 @@ bool ShaderGateHoldsTick()
         g_activeAt = g_gateStart;
         g_gateLogAt = g_gateStart;
         g_gateHolding = true;
+        g_gateSawLoad = true;
         Log("[gate] +%.1f s: the first load after the main menu waits for the shader precompile (%lld pipelines queued; at most %u s)",
             now / 1000.0, static_cast<long long>(g_active ? *g_active : 0), g_gateMaxSec.load());
     }
@@ -847,6 +868,8 @@ void PsoPrecompileTestGate(uint32_t stallMs, uint32_t capMs)
     g_gateStallMs = stallMs;
     g_gateCapMs = capMs;
     g_gateDone = false;
+    g_gateSawLoad = false;
+    g_menuLeftLogged = false;
     g_gateStart = g_gateLogAt = g_activeAt = 0;
     g_gateHolding = false;
     g_gateTicks = 0;
@@ -950,6 +973,8 @@ void PsoPrecompileTestPlayMs(uint32_t ms)
     g_played = false;
     g_playSince = 0;
     g_menuSeen = false;
+    g_gateSawLoad = false;
+    g_menuLeftLogged = false;
 }
 
 void LogPsoPrecompileStats()
@@ -1024,6 +1049,9 @@ void PsoPrecompileTestOriginal(void* fakeSetBatchMode)
     g_playSince = 0;
     g_playMs = 3000;
     g_menuSeen = false;
+    g_gateSawLoad = false;
+    g_menuLeftLogged = false;
+    g_gateDone = false;
     g_inGameMenus = false;
     g_cold = false;
     g_drvBusySeconds = 0;

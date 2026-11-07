@@ -539,12 +539,59 @@ static void Run(const GameModule& game)
     }
     Check(ShaderGateHoldsTick(), "shader gate (progress): a queue that keeps moving is held beyond the stall time");
 
-    state(0, 0);   // play (the cap or the stall let the game through)
+    // the exact order seen live (2026-11-07 Continue and coc from the main menu): the menu closes, then seconds with no
+    // menu and no loading freeze, only then the gate is armed and its tick comes. That calm is not play: still held.
+    state(0, 0);
     tick();
     Sleep(70);
     tick();
-    Check(!ShaderGateHoldsTick() && !PsoPrecompileGateHolding() && strstr(PsoPrecompileGateEnd(), "play has begun"),
-          "shader gate: once play has begun nothing is held");
+    Check(PsoPrecompileGateHolding() && now().inPlay == 0 && ShaderGateHoldsTick(),
+          "shader gate (live order): calm after the held tick began is not play: still held, not in play");
+    running(false);
+    tick();
+    Check(!ShaderGateHoldsTick() && !PsoPrecompileGateHolding() && strstr(PsoPrecompileGateEnd(), "precompile has finished"),
+          "shader gate (live order): released when the precompile finishes, not by the calm");
+    tick();
+    Check(now().inPlay == 1, "shader gate (live order): and after the release the calm counts as play");
+    running(true);
+    Check(!ShaderGateHoldsTick(), "shader gate (live order): nothing held afterwards");
+
+    // the same, from the menu: menu -> load requested (menu closes, calm 3x the play threshold) -> precompile running
+    // -> the first gate tick holds -> the precompile ends -> released
+    SetShaderGate(true, 600);
+    PsoPrecompileTestPlayMs(50);
+    PsoPrecompileTestGate(45000, 0);
+    fakeActive = 120;
+    running(true);
+    state(1, 0);
+    tick();
+    state(0, 0);   // Continue / coc: the menu closes
+    tick();
+    Sleep(160);
+    tick();
+    Check(now().inPlay == 0 && lastMode == 1, "shader gate (menu to hold): the calm after the menu is a load under way, not play: the faster pace stays");
+    Check(ShaderGateHoldsTick() && PsoPrecompileGateHolding(), "shader gate (menu to hold): the first gate tick after that calm is held");
+    Check(ShaderGateHoldsTick() && ShaderGateHoldsTick(), "shader gate (menu to hold): and the next ticks");
+    running(false);
+    Check(!ShaderGateHoldsTick() && !PsoPrecompileGateHolding() && strstr(PsoPrecompileGateEnd(), "precompile has finished"),
+          "shader gate (menu to hold): the precompile ends: released");
+
+    // a first load with no precompile left: nothing to wait for, and play is then recognised as usual
+    PsoPrecompileTestPlayMs(50);
+    PsoPrecompileTestGate(45000, 0);
+    running(false);
+    state(1, 0);
+    tick();
+    state(0, 0);
+    tick();
+    Check(now().inPlay == 0, "shader gate (nothing to wait for): calm before the gate tick: not play yet");
+    Check(!ShaderGateHoldsTick() && !PsoPrecompileGateHolding(), "shader gate (nothing to wait for): precompile finished: the first tick is not held");
+    Sleep(70);
+    tick();
+    Check(now().inPlay == 1, "shader gate (nothing to wait for): then the calm is play");
+    running(true);
+    Check(!ShaderGateHoldsTick() && strstr(PsoPrecompileGateEnd(), "play has begun"), "shader gate: once play has begun nothing is held");
+    running(true);
     SetShaderGate(true, 600);
     PsoPrecompileTestGate(45000, 0);
     state(1, 0);
