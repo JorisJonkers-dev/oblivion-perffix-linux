@@ -5,6 +5,38 @@ Investigations: [investigations.md](investigations.md).
 
 ## 2026-11-07
 
+### PSO record-and-replay works: runtime PSO creation time −70%, no ≥20 ms creations (`pso-record4` → `pso-replay4`)
+8 random spots, seed 1, DLL `623f0cc0`, `PsoRecordReplay=1`.
+
+| | Record run | Replay run |
+|---|---|---|
+| Creations in play | 5493 | 5517 (4652 already replayed) |
+| Total creation time | 10.9 s | **3.3 s** |
+| Creations ≥20 ms | 31 | **0** |
+| Max | 45 ms | 14.4 ms |
+
+- Replay at start: 2029 of 2159 recorded pipelines (127 MB of shaders) in 0.1 s on 3 threads, during the gate hold. It
+  mostly warms the in-process caches.
+- **Limit:** the record hit `PsoRecordMaxMB=128` partway through, hence 570 "new" PSOs in minute 5 of the replay run.
+  Raise the default (512 MB?) or store shader bytecode deduplicated more tightly.
+- **Issues found on the way:**
+  - The hook first landed on a device of our own; fixed by hooking `D3D12CreateDevice`.
+  - `g_played` was never set after the gate; fixed with `PsoPlayStarted()` and a per-minute log line.
+  - A leftover `CrashReportClient` from a GPU crash blocked launches ("WaitingPrevProcess"); the runner guard is in
+    progress.
+- **Next:**
+  - Turn-settle and pop-in A/B with and without replay.
+  - fps and hitches A/B.
+  - Then consider making it the default.
+
+### GPU profiler: stock u_trace layer caused GPU crashes
+- The RADV u_trace build loads in pressure-vessel, but tracing every submit on every queue from the first frame crashed
+  the GPU before the world loaded.
+- The driver is now patched: graphics queue only, a capture window (trigger file, or N s after start, for N frames), and
+  stats off by default.
+- Staged test: first idle (driver loaded, no window), then a 40-frame window at the canal.
+
+
 ### Runtime PSO creation in play is large, even with warm caches (`pso-measure`, 8 random spots seed 1, `PsoRecordReplay=2`)
 | Minute of play | New PSOs | Time | Creations ≥20 ms | Max |
 |---|---|---|---|---|
