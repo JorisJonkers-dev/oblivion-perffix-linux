@@ -116,7 +116,7 @@ class ExtraEnvTest(unittest.TestCase):
 
     def test_parse_env_keeps_commas(self):
         from oblvbench import envfile as ef
-        self.assertEqual(ef.parse_env(["VKD3D_CONFIG=no_upload_hvv,nodxr", "A=1"]),
+        self.assertEqual(ef.parse_env_args(["VKD3D_CONFIG=no_upload_hvv,nodxr", "A=1"]),
                          {"VKD3D_CONFIG": "no_upload_hvv,nodxr", "A": "1"})
         with self.assertRaises(ValueError):
-            ef.parse_env(["novalue"])
+            ef.parse_env_args(["novalue"])

@@ -22,7 +22,7 @@ def dll_overrides(fix_mode, ue4ss=True):
     return ";".join(parts)
 
 
-def parse_env(items):
+def parse_env_args(items):
     """['VKD3D_CONFIG=a,b', 'X=1'] -> dict. One KEY=VAL per item: values may contain commas."""
     out = {}
     for item in items or []:
