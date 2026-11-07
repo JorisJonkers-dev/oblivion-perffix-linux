@@ -5,6 +5,26 @@ Investigations: [investigations.md](investigations.md).
 
 ## 2026-11-07
 
+### Turn-settle: the metric saturates at the canal; Lumen and VT variants unresolved (`spin-turn-canal2`)
+| Variant | Settle | Lighting | Pop-in | Missing regions at t=0 | fps | 0.1% low |
+|---|---|---|---|---|---|---|
+| base | 2.65 s | 2.36 s | 2.50 s | 20 | 82.5 | 62.1 |
+| lumfast (`FastCameraMode=1`, `MaxFramesAccumulated` 10→4) | 2.60 s | 2.41 s | 2.55 s | 18.5 | 84.1 | 65.0 (+5%) |
+| vtup (VT uploads 64, `FramesForFullUpdate` 5→2) | 2.65 s | 2.45 s | 2.56 s | **16.5** | 82.6 | 59.9 |
+
+- **Measurement flaw:** every variant settles at about 2.5–2.65 s, which is the 3 s window minus the 0.5 s tail. The
+  canal is never still (water, foliage, NPCs, FSR jitter), so the metric hits its ceiling.
+- The SSIM "drop" of about 0.10 even for vtup (which should be image-identical once settled) shows the scene differs
+  between slots (NPCs, time). Not usable as an image cost yet.
+- Only weak signal: vtup has fewer missing regions at t=0 (20 → 16.5) at no fps cost.
+- Fixes in progress (branch `turn-settle2`):
+  - motion-masked or structure-only settle;
+  - a 6 s window, reported as ">X s" when not settled;
+  - faster capture;
+  - freezing time and AI during turn and shot laps;
+  - calm test spots.
+
+
 ### Turn-settle, first live result (`spin-turn-canal`, canal, replay on, 16 turns per variant)
 | Variant | Settle | Lighting | Pop-in | Missing regions at t=0 | Luma settle |
 |---|---|---|---|---|---|
