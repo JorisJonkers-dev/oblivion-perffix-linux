@@ -1,0 +1,245 @@
+{
+ "name": "linux-hotspots",
+ "description": "Static hotspots for 'bench.py spin' (one spot, camera turning in laps, settings flipped live), worst first by the evidence in docs/research.md and docs/benchmark.md. Every place, hour and weather is copied from an existing scenario; the scene comments say which and why. The scenes are ordinary static scenes, so 'run --scenario linux-hotspots' works too.",
+ "settings": {},
+ "record": [
+  "r.ScreenPercentage",
+  "Altar.UpscalingMethod",
+  "Altar.FSR3.Quality",
+  "r.FidelityFX.FSR3.QualityMode",
+  "r.FidelityFX.FI.Enabled",
+  "r.VSync",
+  "t.MaxFPS",
+  "sg.ViewDistanceQuality",
+  "sg.ShadowQuality",
+  "sg.GlobalIlluminationQuality",
+  "sg.ReflectionQuality",
+  "sg.PostProcessQuality",
+  "sg.TextureQuality",
+  "sg.EffectsQuality",
+  "sg.FoliageQuality",
+  "sg.ShadingQuality",
+  "r.Lumen.HardwareRayTracing",
+  "r.Lumen.HardwareRayTracing.LightingMode",
+  "r.RayTracing.Culling.Radius",
+  "r.Streaming.PoolSize",
+  "Altar.SaveOnLoading",
+  "Altar.SaveOnFastTravel"
+ ],
+ "masks": [
+  [
+   0.94,
+   0.0,
+   0.06,
+   0.035
+  ]
+ ],
+ "defaults": {
+  "hour": 12,
+  "weather": "Clear",
+  "settle": 8,
+  "measure": 20,
+  "hold": 12
+ },
+ "weathers": {
+  "Clear": "00038EEE",
+  "Cloudy": "00038EF0",
+  "Overcast": "00038EEC",
+  "Fog": "00038EEF",
+  "Rain": "00038EF2",
+  "Thunderstorm": "00038EF1",
+  "Snow": "00038EED"
+ },
+ "places": {
+  "canal": {
+   "world": "CheydinhalWorld",
+   "pos": [
+    120983.5,
+    93025.3,
+    7180.0
+   ],
+   "heading": 288.8,
+   "pitch": 4.6
+  },
+  "chapel-square": {
+   "world": "CheydinhalWorld",
+   "pos": [
+    122787.4,
+    90721.4,
+    7290.0
+   ],
+   "heading": 149.8,
+   "pitch": 0
+  },
+  "ic-market-inn": {
+   "world": "ICMarketDistrict",
+   "pos": [
+    33298.3,
+    68771.1,
+    3550.0
+   ],
+   "heading": 41.3,
+   "pitch": 0
+  },
+  "shrine-near": {
+   "world": "Tamriel",
+   "pos": [
+    157315.0,
+    -19827.0,
+    1300.0
+   ],
+   "heading": 45.0,
+   "pitch": -10.0
+  },
+  "blackwood-wayshrine": {
+   "world": "Tamriel",
+   "pos": [
+    84034,
+    -93229,
+    694
+   ],
+   "heading": 20.6,
+   "pitch": -3,
+   "comment": "Point 20 of blackwood.json's blackwood-flight path (about 1.6k units south of the Wayshrine of Stendarr), turned along the path"
+  },
+  "silver-road-climb": {
+   "world": "Tamriel",
+   "pos": [
+    36936,
+    125432,
+    13524
+   ],
+   "heading": 354.7,
+   "pitch": 0,
+   "comment": "First point of silver-road-upper's path (point 79 of silver-road-north), turned along the path (the road climbing north)"
+  },
+  "roxey-inn-road": {
+   "world": "Tamriel",
+   "pos": [
+    47930.5,
+    102965.4,
+    3032.0
+   ],
+   "heading": 245,
+   "pitch": 0
+  },
+  "doublecross-forest": {
+   "world": "Tamriel",
+   "pos": [
+    117567.2,
+    -120309.2,
+    3154.6
+   ],
+   "heading": 350.2,
+   "pitch": -0.6
+  }
+ },
+ "scenes": [
+  {
+   "id": "cheydinhal-canal",
+   "type": "static",
+   "at": "canal",
+   "hour": 12,
+   "weather": "Clear",
+   "comment": "1 (lowest fps measured). Stock 30.6 fps at 720p (research.md, 'The bottleneck chain in Cheydinhal': canal noon 30.6, dusk 32.2, night 34.1 vs chapel square 44.7 and inn front 53.3); the CPU-limited town view that the render/RHI-thread fixes were built on. Dusk and night variants: cheydinhal.json canal-dusk / canal-night.",
+   "tags": [
+    "hotspot",
+    "city",
+    "cpu"
+   ]
+  },
+  {
+   "id": "ic-market-crowd",
+   "type": "static",
+   "at": "ic-market-inn",
+   "hour": 10,
+   "weather": "Clear",
+   "comment": "2 (crowd cost). The Imperial City market district's own population at 10:00 with the shops open (actors.json ic-market-morning; docs/benchmark.md scenario 'actors': 'many characters'); the view used for the crowd-bound tests of the translate-job cap in research.md (rejected ideas table).",
+   "tags": [
+    "hotspot",
+    "city",
+    "npc"
+   ]
+  },
+  {
+   "id": "peryite-shrine",
+   "type": "static",
+   "at": "shrine-near",
+   "hour": 12,
+   "weather": "Clear",
+   "comment": "3 (creation bursts). Beside Peryite's Shrine (npcburst-visual.json shrine-near) with its five robed worshippers: the NPC creation/cloth burst of 4-5 frames of 40-97 ms stock (research.md, 'Far-away characters created a piece per frame', Peryite rows 89-98 -> 41-51 ms). Standing here exercises their steady cost and LOD/cloth; the burst itself is a travel event (npcburst.json peryite-flight).",
+   "tags": [
+    "hotspot",
+    "npc",
+    "cloth"
+   ]
+  },
+  {
+   "id": "blackwood-wayshrine",
+   "type": "static",
+   "at": "blackwood-wayshrine",
+   "hour": 20,
+   "weather": "Clear",
+   "comment": "4 (creation bursts, forest pop-in). Blackwood forest at dusk just south of the Wayshrine of Stendarr: Sheogorath's Shrine worshippers are created as cell row -22 attaches, 55-72 ms frames (blackwood.json description); dense forest foliage on the GPU scene.",
+   "tags": [
+    "hotspot",
+    "npc",
+    "foliage"
+   ]
+  },
+  {
+   "id": "silver-road-climb",
+   "type": "static",
+   "at": "silver-road-climb",
+   "hour": 12,
+   "weather": "Clear",
+   "comment": "5 (streaming hitches). The Silver Road climb north of Roxey Inn (silver-road-upper.json): 25-40 ms frames at fixed spots while cells, navmesh and NPCs stream (research.md, 'Area-loading order'). A spinning view streams the terrain/LOD in the same way each lap.",
+   "tags": [
+    "hotspot",
+    "streaming",
+    "terrain"
+   ]
+  },
+  {
+   "id": "roxey-inn-night",
+   "type": "static",
+   "at": "roxey-inn-road",
+   "hour": 23,
+   "weather": "Clear",
+   "comment": "6 (night fps + stutter). Outside Roxey Inn at 23:00 looking west along the road: reported in play 2026-10-09 at ~45 fps before frame generation with stutters at 4K (roxey-night.json; docs/benchmark.md scenario 'roxey-night').",
+   "tags": [
+    "hotspot",
+    "night",
+    "gpu"
+   ]
+  },
+  {
+   "id": "doublecross-pond-rain",
+   "type": "static",
+   "at": "doublecross-forest",
+   "hour": 16.84,
+   "weather": "Rain",
+   "comment": "7 (GPU-bound foliage/water). The pond by Fort Doublecross in the rain, late afternoon (gpu-check.json, the kit's Check-GPU; leyawiin-forest.json): GPU-heavy foliage, water and weather. Note: gpu-check uses profile 'own'; spin uses the scenario/--profile default.",
+   "tags": [
+    "hotspot",
+    "gpu",
+    "foliage",
+    "water",
+    "weather"
+   ]
+  },
+  {
+   "id": "cheydinhal-chapel-square",
+   "type": "static",
+   "at": "chapel-square",
+   "hour": 12,
+   "weather": "Clear",
+   "comment": "8 (milder town view). Chapel square at noon: 44.7 fps stock vs 56.6 with the render fixes at 720p (research.md, canal/chapel table); the second Cheydinhal view for comparing a setting at a spot with less CPU pressure than the canal.",
+   "tags": [
+    "hotspot",
+    "city",
+    "cpu"
+   ]
+  }
+ ]
+}
