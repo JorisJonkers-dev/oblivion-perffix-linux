@@ -5201,7 +5201,7 @@ int wmain(int argc, wchar_t** argv)
             stamp(T0 + 10 * SEC);
             Check(LoadConfigIfChanged(tmp, &c, &now) && c.osPageCacheMB == 99, "config: a changed file is parsed within one tick");
             writeIni("[Fixes]\r\nOsPageCacheMB=1234\r\n");   // longer: the size changed
-            stamp(T0 + 10 * SEC);
+            stamp(T0 + 11 * SEC);   // (Wine's profile-string cache keys on the file time, so each version gets its own)
             Check(LoadConfigIfChanged(tmp, &c, &now) && c.osPageCacheMB == 1234, "config: a size change is parsed");
             DeleteFileW(tmp);
             Check(LoadConfigIfChanged(tmp, &c, &now) && c.osPageCacheMB == Config().osPageCacheMB, "config: a missing ini reads as the defaults");
