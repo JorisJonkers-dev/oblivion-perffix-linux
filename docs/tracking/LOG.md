@@ -5,6 +5,25 @@ Investigations: [investigations.md](investigations.md).
 
 ## 2026-11-07
 
+### Shader gate works (DLL `c7e911ea`, branch `gate-fix`)
+The run started with Continue from the main menu while the precompile was still going. The log, in order:
+
+| Time | Event |
+|---|---|
+| +29.3 s | menu left; the first gate tick decides |
+| +35.1 s | the load waits; 23 pipelines queued |
+| +38.0 s | **shader precompile finished before play** |
+| +38.1 s | released after 3.0 s, 6 ticks skipped, then the fade-in |
+
+Before the fix the precompile finished IN PLAY, at +53 to +71 s.
+
+### Lesson: never load the owner's saves in benchmarks
+- After the Continue load, the run stalled for 5 min in the state `menu=1 loadscreen=1 frozen=1 mainmenu=1`. Some menu
+  or dialog appeared on the owner's tutorial autosave.
+- Owner: benchmarks must run on their own at varied spots, never needing the player.
+- Rule: use fresh `coc` starts only (the default). Don't use `--start continue` against the owner's saves.
+
+
 ### Owner rule change: slight image changes allowed for sufficient gains
 - Allowed only when the gain is at least about 5% fps, or clearly fewer hitches or better lows.
 - The visible difference must be minimal: SSIM against the base at the same headings, plus side-by-side images.
