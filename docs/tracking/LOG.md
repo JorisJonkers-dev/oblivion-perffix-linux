@@ -5,6 +5,37 @@ Investigations: [investigations.md](investigations.md).
 
 ## 2026-11-07
 
+### All 8 hotspots with our DLL `c7e911ea` (fresh `coc` start, own settings)
+The shader gate also covers the `coc` path: precompile finished before play at +35.7 s.
+
+| Spot | fps | 1% low | Worst frame | GPU |
+|---|---|---|---|---|
+| canal | 69.1 | 59.6 | 21.8 ms | 97% |
+| IC market crowd | 72.2 | 66.9 | 106.8 ms (2 hitches) | 99% |
+| Peryite shrine | 68.0 | 48.2 | – | 99% |
+| Blackwood | 97.1 | 80.5 | – | 99% |
+| Silver Road climb | 99.5 | 78.0 | – | 99% |
+| Roxey Inn, night | 80.2 | 65.2 | – | 99% |
+| Fort Doublecross pond, rain | 66.2 | 59.6 | – | 99% |
+| chapel square | 64.4 | 59.8 | – | 99% |
+
+- Static spots are smooth and GPU-bound everywhere. The only hitches are in the crowd.
+- More fps therefore needs GPU-side changes: the cvar trade-off sweep is running.
+- Pop-in and smoothness during movement need the turn-settle metric (in progress).
+
+### Owner observation: late pop-in on turning, and night lighting filling in over time
+Small objects appear only once the camera turns toward them; at night the lighting converges visibly after a turn.
+
+Suspects:
+- PSO precache proxy delay (`r.PSOPrecache.ProxyCreationStrategy`), made worse by vkd3d compile speed;
+- view-dependent Nanite and texture streaming;
+- Lumen surface cache and lighting update budgets;
+- VSM local-light page caching;
+- eye adaptation and volumetric fog temporal smoothing.
+
+Root-cause research → `ideas/popin-lighting.md`. Measurement → `spin --turn-settle` (branch `turn-settle`).
+
+
 ### Shader gate works (DLL `c7e911ea`, branch `gate-fix`)
 The run started with Continue from the main menu while the precompile was still going. The log, in order:
 
