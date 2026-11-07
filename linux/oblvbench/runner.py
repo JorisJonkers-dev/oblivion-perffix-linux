@@ -29,6 +29,20 @@ def in_world(s):
             and s.get("level") != "L_SeamlessTransition" and (s.get("level") != "L_PersistentDungeon" or s.get("sub")))
 
 
+def in_world_loose(s):
+    """In the world without insisting on a sub-level: a save made in a dungeon that is the persistent level itself (the
+    tutorial prison) has no sub-level name. The same readings are also true for a few seconds between the menu closing
+    and the load starting, so this one must hold for much longer than in_world (LOOSE_STABLE_S)."""
+    return (s.get("pawn") == "1" and s.get("frozen") == "0" and s.get("loadscreen") == "0" and s.get("travel") != "1"
+            and s.get("level") not in (None, "", "L_SeamlessTransition"))
+
+
+# how long in_world_loose must hold without a sub-level before a loaded save is believed (the load itself can sit
+# quietly that long: 4-5 s measured with no menu, loading freeze or loading screen)
+LOOSE_STABLE_S = 20.0
+LOAD_TIMEOUT_S = 300
+
+
 def at_menu(s):
     return s.get("level") == "L_PersistentDungeon" and not s.get("sub") and s.get("frozen") == "1" and s.get("travel") != "1"
 
@@ -457,6 +471,33 @@ class Runner:
         if "driver=frame" not in ping:
             self.warn(f"the mod's frame loop did not start within 90 s ({ping}): flights and walks will not work")
 
+    def wait_save_loaded(self, timeout=300, poll=0.5):
+        """After Continue: the world is there when the strict in_world holds for 3 s (a sub-level is named), or the loose
+        one (any level with a pawn, no freeze, no loading screen, no travel) for LOOSE_STABLE_S: a save made in a dungeon
+        that is the persistent level has no sub-level, and never matches the strict one."""
+        end = time.monotonic() + timeout
+        strict = 0
+        loose_since = None
+        self.last_state_text = "none read"
+        while time.monotonic() < end:
+            self.bridge.check()
+            s = self.bridge.state(timeout=3.0)
+            if s:
+                self.last_state_text = " ".join(f"{k}={v}" for k, v in s.items() if k in
+                                                ("level", "sub", "pawn", "frozen", "loadscreen", "travel", "mainmenu", "menu"))
+            strict = strict + 1 if s and in_world(s) else 0
+            if strict >= 6:
+                return s
+            if s and in_world_loose(s):
+                loose_since = loose_since or time.monotonic()
+                if time.monotonic() - loose_since >= LOOSE_STABLE_S:
+                    self.say(f"the save is loaded (no sub-level name: {self.last_state_text})")
+                    return s
+            else:
+                loose_since = None
+            self.wait(poll)
+        return None
+
     def enter_world(self):
         if self.start_mode == "continue":
             s = self.bridge.state() or {}
@@ -473,9 +514,9 @@ class Runner:
                 raise RuntimeError(f"expected the 'Continue from your last saved game?' box, got: {msg}")
             self.send("msg 0", timeout=60)
             self.wait(2)
-            s = self.bridge.wait_state(in_world, timeout=300, stable=6, poll=0.5)
+            s = self.wait_save_loaded(timeout=LOAD_TIMEOUT_S)
             if not s:
-                raise RuntimeError("the save did not load")
+                raise RuntimeError(f"the save did not load (last state: {self.last_state_text})")
             return s
         # no save needed: the old engine's `coc` from the main menu starts a game with the default character there
         cell = self.scn.get("startCell", "CheydinhalChapelOfArkay")

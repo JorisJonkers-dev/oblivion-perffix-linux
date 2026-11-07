@@ -47,6 +47,8 @@ class FakeGame:
         self.mod = None
         self.frames = 0
         self._beat = None
+        self.cont = "0"           # the main menu's Continue button
+        self.loaded_phase = "world"   # what Continue ends in: "world" (a named sub-level) or "dungeon" (none)
 
     # Steam
     def launch(self, steam="steam", args=()):
@@ -69,7 +71,12 @@ class FakeGame:
             time.sleep(0.3)
 
     def state(self, light=False):
-        if self.phase == "world":
+        if self.phase == "dungeon":   # a save made in a dungeon that is the persistent level: no sub-level name
+            s = (f"pc=1 level=L_PersistentDungeon pawn=1 x={self.pos[0]} y={self.pos[1]} z={self.pos[2]} heading=90 "
+                 f"pitch=0 travel=0 subloaded=1")
+        elif self.phase == "loading":
+            s = "pc=1 level=L_PersistentDungeon pawn=1 x=0 y=0 z=0 travel=0"
+        elif self.phase == "world":
             s = (f"pc=1 level={self.level} pawn=1 x={self.pos[0]} y={self.pos[1]} z={self.pos[2]} heading=90 "
                  f"pitch=0 travel=0 subloaded=1")
         elif self.phase == "cell":
@@ -77,7 +84,7 @@ class FakeGame:
         else:
             s = "pc=1 level=L_PersistentDungeon pawn=0 travel=0"
         if not light:
-            s += " menu=0 loadscreen=0 frozen=" + ("0" if self.phase == "world" else "1") + " mainmenu=1 cont=0"
+            s += " menu=0 loadscreen=0 frozen=" + ("0" if self.phase in ("world", "dungeon") else "1") + f" mainmenu=1 cont={self.cont}"
         return s
 
     def handlers(self):
@@ -85,6 +92,17 @@ class FakeGame:
             if rest.startswith("coc "):
                 self.phase = "cell"
             return "sent"
+
+        def continue_(m, rest):
+            self.phase = "box"
+            return "sent"
+
+        def msg(m, rest):
+            if rest:
+                self.phase = "loading"
+                threading.Timer(1.0, lambda: setattr(self, "phase", self.loaded_phase)).start()
+                return "clicked"
+            return "Continue from your last saved game?" if self.phase == "box" else ""
 
         def closemenu(m, rest):
             self.phase = "world"
@@ -111,7 +129,7 @@ class FakeGame:
             "ping": lambda m, r: f"pong clock={m.clock():.3f} driver=frame frames={self.frames} loops_per_s=100.0",
             "state": lambda m, r: self.state(),
             "where": lambda m, r: self.state(light=True),
-            "obv": obv, "closemenu": closemenu, "tp": tp, "lua": lua, "quit": quit_,
+            "continue": continue_, "msg": msg, "obv": obv, "closemenu": closemenu, "tp": tp, "lua": lua, "quit": quit_,
             "god": lambda m, r: "god=true",
             "get": lambda m, r: f"{r}=nil",
             "cond": lambda m, r: "hour=12.000 wx=Clear:1.00",
@@ -235,6 +253,43 @@ class RunnerTest(unittest.TestCase):
             self.assertIn(verb, sent)
         coc = [r for v, r in fake.mod.received if v == "obv" and r.startswith("coc")]
         self.assertEqual(coc, ["coc TestCell"])
+
+    def test_continue_into_a_dungeon_save_without_sub_level(self):
+        # the tutorial prison autosave: the persistent level itself, GetSubLevelName empty, so the strict in_world never held
+        # ("the save did not load" after 5 min in a live run); the loose one accepts it after LOOSE_STABLE_S
+        def go(loaded_phase, loose_s, timeout=300):
+            run_dir = self.tmp / f"results/run-{loaded_phase}"
+            fake = self.make_game(run_dir)
+            fake.cont, fake.loaded_phase = "1", loaded_phase
+            fake.pos = (1.0, 2.0, 3.0)
+            patches = [
+                mock.patch.object(game, "launch_via_steam", fake.launch),
+                mock.patch.object(game, "find_game_pid", lambda: 4242 if fake.running else None),
+                mock.patch.object(game, "find_game_pids", lambda pattern=None: [4242] if fake.running else []),
+                mock.patch.object(game, "pid_alive", lambda p: fake.running),
+                mock.patch.object(game, "process_start_wall", lambda p: fake.log_start - 1),
+                mock.patch.object(game, "cmdline", lambda p: "S:\\x\\OblivionRemastered-Win64-Shipping.exe -FixedSeed"),
+                mock.patch.object(runner, "LOOSE_STABLE_S", loose_s),
+                mock.patch.object(runner, "LOAD_TIMEOUT_S", timeout),
+            ]
+            for p in patches:
+                p.start()
+            out = []
+            try:
+                r = self.make_run(run_dir, out, "on", start="continue")
+            finally:
+                for p in patches:
+                    p.stop()
+                fake.running = False
+            return r, out
+        r, out = go("world", 1.5)
+        self.assertEqual(r["outcome"], "ok", out)
+        r, out = go("dungeon", 1.5)
+        self.assertEqual(r["outcome"], "ok", out)
+        self.assertTrue(any("no sub-level name" in l for l in out), out)
+        r, out = go("dungeon", 600.0, timeout=5)     # never believed when it is only briefly quiet: fails with the state in the message
+        self.assertEqual(r["outcome"], "failed")
+        self.assertTrue(any("the save did not load (last state: level=L_PersistentDungeon" in w for w in r["warnings"]), r["warnings"])
 
     def test_off_run_env(self):
         result, fake, out = self.run_fake("off")
