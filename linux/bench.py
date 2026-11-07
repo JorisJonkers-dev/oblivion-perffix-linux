@@ -133,7 +133,10 @@ def cmd_spin(a, paths):
                               "heading": a.heading, "world": a.world, "cell": a.cell, "hour": a.hour,
                               "weather": a.weather, "shots": a.shots, "shot_headings": shot_headings,
                               "shot_settle": a.shot_settle, "shot_width": a.shot_width, "shot_pairs": a.shot_pairs,
-                              "diff_thresh": a.diff_thresh,
+                              "diff_thresh": a.diff_thresh, "turn_settle": a.turn_settle,
+                              "turn_headings": spinshots.parse_headings(a.turn_headings) if a.turn_headings else None,
+                              "turn_hold": a.turn_hold, "turn_from": a.turn_from, "turn_interval": a.turn_interval,
+                              "turn_secs": a.turn_secs, "turn_width": a.turn_width,
                               "thresholds": {"ssimMaxDrop": a.ssim_max_drop, "gainFpsPct": a.gain_fps,
                                              "gainLowsPct": a.gain_lows, "gainHitchesPct": a.gain_hitches}})
         r = SpinRunner(paths, opts, say=say).run()
@@ -304,6 +307,16 @@ def main(argv=None):
     p.add_argument("--shot-settle", type=float, default=1.0, help="seconds the camera holds a heading before the grab (default 1.0)")
     p.add_argument("--shot-width", type=int, default=960, help="capture is block-averaged to about this width (default 960)")
     p.add_argument("--shot-pairs", type=int, default=2, help="slot pairs compared per heading (default 2; more = slower, steadier)")
+    p.add_argument("--turn-settle", action="store_true",
+                   help="after every slot (outside the fps laps) snap-turn the camera and capture the window for a few seconds: "
+                        "how long until the picture stops changing (late pop-in, lighting filling in); settle s, AUC, pops per variant")
+    p.add_argument("--turn-headings", metavar="H,H,...", help="headings to snap to (default 0,90,180,270)")
+    p.add_argument("--turn-hold", type=float, default=4.0, help="seconds the camera waits facing away before each snap (default 4)")
+    p.add_argument("--turn-from", choices=["back", "side"], default="back",
+                   help="wait facing away 180 deg (back, default) or 90 deg to the left (side) of the target heading")
+    p.add_argument("--turn-interval", type=float, default=0.1, help="seconds between captures after the snap (default 0.1; grabs slower than this just run back to back)")
+    p.add_argument("--turn-secs", type=float, default=3.0, help="seconds captured after the snap (default 3)")
+    p.add_argument("--turn-width", type=int, default=320, help="turn captures are block-averaged to about this width (default 320: faster grabs)")
     p.add_argument("--diff-thresh", type=int, default=24, help="luminance difference (0-255) that counts as a strongly different pixel (default 24)")
     p.add_argument("--ssim-max-drop", type=float, default=0.015, help="COST when the SSIM drop beyond the noise floor exceeds this (default 0.015)")
     p.add_argument("--gain-fps", type=float, default=5.0, help="GAIN when avg fps rises by at least this %% (default 5)")

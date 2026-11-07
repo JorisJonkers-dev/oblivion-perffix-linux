@@ -423,6 +423,9 @@ def report_markdown(result):
         if im0.get("noiseFloor") is None:
             out += ["", "No noise floor: the base has fewer than two slots with pictures, so the drop is measured against 1.0."]
         out += ["", "Side-by-side pictures (base | variant | difference): [images.md](images.md)."]
+    if r.get("turnSettle") and sp.get("turnSettle"):
+        from . import turnsettle
+        out += turnsettle.report_lines(r["turnSettle"], sp["turnSettle"])
     if r.get("slots"):
         out += ["", "## Slots", "", "| # | variant | s | frames | avg fps | 1% low | hitches | lap fps |", "|---:|---|---:|---:|---:|---:|---:|---|"]
         for i, s in enumerate(r["slots"], 1):

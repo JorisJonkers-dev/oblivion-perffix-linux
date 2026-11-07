@@ -198,6 +198,34 @@ python3 linux/bench.py spin --scene cheydinhal-canal --profile own --shots \
     --variant fol80:cvar:foliage.DensityScale=0.8 --variant vsm:cvar:r.Shadow.Virtual.ResolutionLodBiasDirectional=0.5
 ```
 
+### Late pop-in and lighting: `--turn-settle`
+
+Off by default. After every slot (and its `--shots` lap), outside the measured laps, the runner does `--turn-headings`
+(default 0,90,180,270) turns: it looks away from the target for `--turn-hold` s (default 4; `--turn-from back` = 180 deg
+away, the default, or `side` = 90 deg to the left, so the target view is not recently seen), then sends one `look H` plus
+`cam snap` (the cinematic camera jumps instead of gliding) and grabs the window every `--turn-interval` s (default 0.1)
+for `--turn-secs` s (default 3) at about `--turn-width` 320 px (small grabs are fast; a grab slower than the interval
+just runs back to back, the achieved cadence is in the report and a warning is given above 1.5x). Needs `xdotool`
+and `xwd`. Per turn (luminance, MangoHud / HUD masked, reference = mean of the last 0.5 s):
+
+- settle s (total): first time from which SSIM to the reference stays above a noise-aware limit (at most 0.98);
+- lighting settle s: the same on 1/8-scale blurred frames (Lumen, exposure, fog convergence);
+- pop-in settle s: Sobel edge-map difference within noise and no strong reference edge region (>= 3 px) missing
+  (late objects, geometry, texture detail); `missing regions at t=0` counts those regions in the first frame;
+- pops (frame-to-frame jumps after 0.2 s) and AUC (difference to the reference above noise, integrated over time);
+- luminance curve: classified as exponential (eye adaptation, with its time constant), monotone, stepwise (lighting /
+  shadow pages), non-monotone or flat, plus the time until it stays within 3 % of the final value.
+
+`report.md` and `result.json` (`turnSettle`, per-slot `turns` with the curves) give the median over turns and slots per
+variant, the change against `base` (`~` = within the slot-to-slot spread or one capture interval) and the base's noise.
+Contact strips (t = 0, 0.2, 0.5, 1, 2 s, last) are in `turn/<variant>/s<slot>/` and the "Turn settle" section of
+`images.md`. Very small objects are below the thresholds by design (floors: 0.5 % strongly different pixels, edge regions of 3 px at half capture size).
+
+```sh
+python3 linux/bench.py spin --scene cheydinhal-canal --profile own --turn-settle \
+    --variant pso0:cvar:r.PSOPrecache.ProxyCreationStrategy=0
+```
+
 ## Tuning the spare-block cache offline (OsPageCache)
 
 Record one trace in the game, then try policies without it (details: [docs/research-linux/ideas/oscache-sim.md](../docs/research-linux/ideas/oscache-sim.md)):

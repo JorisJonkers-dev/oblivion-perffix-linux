@@ -3,12 +3,13 @@ order (see spin.py for the logic that needs no game). Reuses Runner for the star
 clean-up; only the part between 'in the world' and 'quit' is its own."""
 import json
 import shutil
+import statistics
 import subprocess
 import sys
 import time
 from pathlib import Path
 
-from . import detail, dllvariant, diagwin, fixini, imgcmp, scenario, spin, spinshots
+from . import detail, dllvariant, diagwin, fixini, imgcmp, scenario, spin, spinshots, turnsettle
 from .paths import REPO
 from .runner import Options, Runner
 
@@ -41,6 +42,15 @@ class SpinOptions(Options):
         self.shot_step = int(kw.get("shot_step", 2))
         self.diff_thresh = int(kw.get("diff_thresh", 24))
         self.diff_gain = int(kw.get("diff_gain", 4))
+        self.turn_settle = bool(kw.get("turn_settle", False))
+        self.turn_headings = [float(h) for h in (kw.get("turn_headings") or turnsettle.DEFAULT_HEADINGS)]
+        self.turn_hold = float(kw.get("turn_hold", 4.0))
+        self.turn_from = kw.get("turn_from", "back")
+        self.turn_interval = float(kw.get("turn_interval", 0.1))
+        self.turn_secs = float(kw.get("turn_secs", 3.0))
+        self.turn_width = int(kw.get("turn_width", 320))
+        self.turn_thresholds = kw.get("turn_thresholds") or {}
+        self.turn_capturer_factory = kw.get("turn_capturer_factory")     # tests: a fake window grabber
         self.thresholds = {**spin.THRESHOLDS, **(kw.get("thresholds") or {})}
         self.capturer_factory = kw.get("capturer_factory")        # tests: a fake window grabber
 
@@ -58,6 +68,10 @@ class SpinRunner(Runner):
         self.order = []
         self.shot_cap = None
         self.shot_log = []
+        self.turn_cap = None
+        self.turn_log = []
+        self.turn_grab_ms = []
+        self.turn_dts = []
 
     # ------------------------------------------------------------ planning
 
@@ -69,6 +83,11 @@ class SpinRunner(Runner):
             raise spin.SpinError("--laps must be at least 1")
         if o.shots and o.shot_settle < 0:
             raise spin.SpinError("--shot-settle must not be negative")
+        if o.turn_settle:
+            if o.turn_from not in turnsettle.FROM_MODES:
+                raise spin.SpinError("--turn-from must be back or side")
+            if o.turn_hold < 0 or o.turn_interval <= 0 or o.turn_secs < 1.0:
+                raise spin.SpinError("--turn-hold must not be negative, --turn-interval positive, --turn-secs >= 1")
         if o.pos:
             if bool(o.world) == bool(o.cell):
                 raise spin.SpinError("--pos needs exactly one of --world NAME or --cell NAME")
@@ -127,7 +146,8 @@ class SpinRunner(Runner):
         o = self.o
         lap = spin.lap_seconds(o.deg_per_sec)
         shots = len(o.shot_headings) * (o.shot_settle + 0.6) if o.shots else 0
-        return len(self.order) * (o.settle + lap * (o.laps + 1) + 2 + shots) + 30
+        turns = len(o.turn_headings) * (o.turn_hold + o.turn_secs + 0.5) if o.turn_settle else 0
+        return len(self.order) * (o.settle + lap * (o.laps + 1) + 2 + shots + turns) + 30
 
     def announce(self, scenes, estimate, fix_mode, limit_min):
         o = self.o
@@ -203,6 +223,9 @@ class SpinRunner(Runner):
                 self.slots.append({"variant": name, "t0": t0, "t1": t1, "applied": applied})
                 if o.shots:
                     self.slots[-1]["shots"] = self.shot_lap(name, len(self.slots))
+                if o.turn_settle:
+                    self.slots[-1]["slot"] = len(self.slots)
+                    self.slots[-1]["turns"] = self.turn_lap(name, len(self.slots))
                 self.check_pins(scene["id"])
         finally:
             self.put_back(ini_t, cvar_t)
@@ -249,6 +272,71 @@ class SpinRunner(Runner):
                 self.warn(f"shot {name} s{slot} {hn}: {e}")
         self.say(f"shots {name} s{slot}: {len(got)}/{len(o.shot_headings)}")
         return got
+
+    def grab_turn(self):
+        if self.turn_cap is None:
+            f = self.o.turn_capturer_factory or self.o.capturer_factory
+            self.turn_cap = f() if f else detail.Capturer(target_w=self.o.turn_width)
+        return self.turn_cap.grab()
+
+    def turn_lap(self, name, slot):
+        """After a measured slot (outside the fps windows): for each --turn-headings H, look away for --turn-hold s,
+        then one `look H` plus `cam snap` (the cinematic camera jumps instead of gliding) and grab the window every
+        --turn-interval s for --turn-secs s. Each series is analysed (turnsettle.analyse_turn) and its contact strip
+        saved. -> [turn dicts]"""
+        o = self.o
+        masks = spinshots.all_masks(self.scn.get("masks"))
+        th = {**o.turn_thresholds, "diffThresh": o.diff_thresh}
+        out = []
+        for h in o.turn_headings:
+            try:
+                self.hold_heading(turnsettle.from_heading(h, o.turn_from), o.turn_hold)
+                self.send(f"look {h % 360:.2f} {o.pitch:g}", timeout=5)
+                t0 = time.time()
+                self.send("cam snap", timeout=5, nothrow=True)
+                frames = self.capture_turn(t0)
+                res = turnsettle.analyse_turn(frames, masks, th)
+                res["heading"] = h
+                if "error" not in res:
+                    res["strip"] = turnsettle.turn_rel(name, slot, h)
+                    res["stripTimes"] = turnsettle.write_strip(self.run_dir / res["strip"], frames)
+                else:
+                    self.warn(f"turn {name} s{slot} {h:g}: {res['error']}")
+                self.turn_log.append({"slot": slot, "variant": name, "heading": h, "t": round(t0, 3)})
+                out.append(res)
+            except (detail.CaptureError, OSError, ValueError, imgcmp.ImageError, subprocess.SubprocessError) as e:
+                self.warn(f"turn {name} s{slot} {h:g}: {e}")
+        ok = [t for t in out if "error" not in t]
+        self.say(f"turn {name} s{slot}: " + (", ".join(f"{t['heading']:g}: settle {t['settleS']:.2f}s pops {t['pops']}"
+                                                    for t in ok) or "no turn measured"))
+        return out
+
+    def capture_turn(self, t0):
+        """Frames [(t after the snap, picture)] on a fixed cadence of --turn-interval s (ticks missed because a grab
+        took longer are skipped, not caught up). t = middle of the grab."""
+        o = self.o
+        frames, k = [], 0
+        while True:
+            due = t0 + k * o.turn_interval
+            now = time.time()
+            if due - t0 > o.turn_secs:
+                break
+            if due > now:
+                time.sleep(due - now)
+            self.bridge.check()
+            ts = time.time()
+            try:
+                f = self.grab_turn()
+            except detail.CaptureError as e:
+                self.warn(f"turn grab: {e}")
+                k += 1
+                continue
+            te = time.time()
+            frames.append(((ts + te) / 2 - t0, f))
+            self.turn_grab_ms.append((te - ts) * 1000)
+            k = max(k + 1, int((te - t0) / o.turn_interval) + 1)
+        self.turn_dts += [b[0] - a[0] for a, b in zip(frames, frames[1:])]
+        return frames
 
     def apply_variant(self, v, ini_t, cvar_t):
         applied = {}
@@ -330,6 +418,8 @@ class SpinRunner(Runner):
                 spin.apply_images(self.result.get("variants") or [], images, o.thresholds)
             except Exception as e:
                 self.warn(f"image comparison failed: {e}")
+        if o.turn_settle:
+            self.write_turn_outputs(run_dir)
         (run_dir / "heading-timeline.json").write_text(json.dumps(self.timeline.to_json()))
         try:
             self.split_ledger(run_dir)
@@ -337,6 +427,23 @@ class SpinRunner(Runner):
             self.warn(f"ledger split by variant failed: {e}")
         self.result["warnings"] = self.warnings
         spin.write_result(run_dir, self.result)
+
+    def write_turn_outputs(self, run_dir):
+        o = self.o
+        cfg = {"headings": o.turn_headings, "turns": len(o.turn_headings), "hold": o.turn_hold, "from": o.turn_from,
+               "interval": o.turn_interval, "secs": o.turn_secs, "width": o.turn_width, "log": self.turn_log,
+               "achievedInterval": round(statistics.median(self.turn_dts), 4) if self.turn_dts else None,
+               "grabMs": round(statistics.median(self.turn_grab_ms), 1) if self.turn_grab_ms else None,
+               "thresholds": {**turnsettle.DEFAULTS, **o.turn_thresholds, "diffThresh": o.diff_thresh}}
+        self.result["spin"]["turnSettle"] = cfg
+        try:
+            if cfg["achievedInterval"] and cfg["achievedInterval"] > 1.5 * o.turn_interval:
+                self.warn(f"turn capture ran every {cfg['achievedInterval']:.2f} s ({cfg['grabMs']:.0f} ms per grab), "
+                          f"slower than --turn-interval {o.turn_interval:g}: settle times are only good to that")
+            self.result["turnSettle"] = turnsettle.summarise(self.slots, o.variants, max(o.turn_interval, cfg["achievedInterval"] or 0))
+            turnsettle.write_gallery(run_dir, self.slots)
+        except Exception as e:
+            self.warn(f"turn settle summary failed: {e}")
 
     def split_ledger(self, run_dir):
         src = run_dir / "diag" / "OblivionPerfFix-ledger.csv"
