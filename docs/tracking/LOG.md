@@ -5,6 +5,23 @@ Investigations: [investigations.md](investigations.md).
 
 ## 2026-11-07
 
+### `VKD3D_CONFIG=no_upload_hvv` at the canal: no measurable gain (2+2 runs)
+
+| Variant | fps (r1 / r2) | 1% lows | Worst frame |
+|---|---|---|---|
+| base | 63.7 / 67.0 | 54.2 / 54.5 | 40.0 / 20.0 ms |
+| no_upload_hvv | 64.2 / 68.9 | 40.9 / 56.8 | 27.8 / 19.5 ms |
+
+The difference is within run-to-run noise. Not adopted. Investigation 18 stays open for other identical-image GPU options.
+
+### Monitor layout reset by GNOME (not a benchmark setting)
+The Sony TV on DP-1 became active and GNOME fell back to default modes: everything landscape at 60 Hz. The layout was
+restored with `gnome-monitor-config` to the saved one: HDMI-2 portrait-left at 144 Hz, HDMI-1 2560x1440 at 144 Hz as
+primary, DP-1 off.
+- Pitfall: the tool repeats `-t` on later logical monitors, so give `-t normal` explicitly for each.
+- Before the next benchmark, check that the layout and refresh rates are intact.
+
+
 ### First spin session: canal, base vs `VtStreamingUploads=64` (`spin-canal-vt64`)
 Report: [runs/20261107-100653-spin-canal-vt64.md](runs/20261107-100653-spin-canal-vt64.md).
 

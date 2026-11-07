@@ -1,0 +1,61 @@
+{
+ "diagFiles": null,
+ "dll": null,
+ "env": {
+  "MANGOHUD": "1",
+  "MANGOHUD_CONFIGFILE": "/home/ExtraToast/Projects/opf-run/linux/results/20261107-101517-canal-env-base-r1/mangohud.conf",
+  "OBLV_BENCH_MARKER": "/home/ExtraToast/Projects/opf-run/run/launch-marker.txt",
+  "OBLV_GAME_ARGS": "-FixedSeed",
+  "WINEDLLOVERRIDES": "version=n,b;dwmapi=n,b"
+ },
+ "fix": "on",
+ "fixIniOverrides": null,
+ "label": "canal-env-base-r1",
+ "loadSec": 68.8,
+ "outcome": "ok",
+ "profile": {
+  "description": "Your own settings as they are (resolution, window mode, upscaler, quality, frame cap): nothing is changed. Used by -Watch. Results depend on those settings, so say which ones you used when you share them",
+  "name": "own",
+  "own": true
+ },
+ "scenario": "linux-hotspots",
+ "scenes": [
+  {
+   "avgMs": 15.7,
+   "cond": {
+    "atEnd": "hour=12.008 wx=Clear:1.00 npcs=1 near=BP_OghashgraMagul@122066,94073",
+    "atSet": "hour=12.001 wx=Clear:1.00",
+    "hour": "12",
+    "pinned": true,
+    "timescale": "1",
+    "weather": "Clear"
+   },
+   "cpuLoad": 63.5,
+   "fps": 63.7,
+   "frames": 1273,
+   "gpuLoad": 97.2,
+   "hitchMs": 24.4,
+   "hitches": 1,
+   "hour": "12.01",
+   "id": "cheydinhal-canal",
+   "level": "L_CheydinhalWorld",
+   "longestGapMs": 40.0,
+   "low01": 43.5,
+   "low1": 54.2,
+   "over100": 0,
+   "over250": 0,
+   "over50": 0,
+   "p50Ms": 15.62,
+   "p95Ms": 17.15,
+   "p999Ms": 22.96,
+   "p99Ms": 18.43,
+   "seconds": 20.0,
+   "sub": "",
+   "type": "static",
+   "worstMs": 40.0
+  }
+ ],
+ "start": "fresh",
+ "time": "2026-11-07 10:15:18",
+ "warnings": []
+}
