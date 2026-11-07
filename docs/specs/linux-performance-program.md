@@ -86,7 +86,7 @@ Every change keeps the project's Rules: identical image and gameplay, fail-safe 
 
 ## Implementation Decisions
 
-Workstreams in priority order (1–8 first, then 9–11 alongside, 12 enables faster work on 9). Each one ends with an A/B measurement through the benchmark.
+Workstreams in priority order (1–7 first, then 8–10 alongside; 11 speeds up work on 8). Each one ends with an A/B measurement through the benchmark.
 
 1. **Regression bisect at busy towns (first).**
    - Stock vs fix on the Cheydinhal chapel square showed −25% fps, 18 hitches, and GPU load falling from 97% to 88% with the fix on.
@@ -131,7 +131,7 @@ Workstreams in priority order (1–8 first, then 9–11 alongside, 12 enables fa
    - Proton's Wayland driver where it actually loads.
    - Input latency has no direct measurement in the benchmark. Use the frame-time spread and present-to-present pacing as proxies, and state that limit.
 
-9. **Old-engine parallelisation and repairs.**
+8. **Old-engine parallelisation and repairs.**
    - Map the old engine's per-frame work on its own thread from the binary and OBSE64's reverse-engineering headers:
      process lists by AI level, the script runner, the Havok step, cell attach, pathfinding, detection, magic, and the
      hand-off to UE.
@@ -143,20 +143,20 @@ Workstreams in priority order (1–8 first, then 9–11 alongside, 12 enables fa
    - Each change is one ini key (default off until proven), checked by the self-test and proven by A/B at the matching
      hotspot. Use the tick split for the old engine's share of each frame.
 
-10. **Known engine issues.**
+9. **Known engine issues.**
     - From the catalogue: long-session slowdown, crashes after 1–3 hours, the crash when minimised during start-up, the
       corral's expensive per-frame state, crowds and fights, and visual glitches (a spell's look staying, a brightness
       flash at menus, banners flipping detail).
     - Each gets a reproduction scene or long spin session first, then a fix if the cause is found.
 
-11. **Tracking.**
+10. **Tracking.**
     - Every run is indexed by a generator into a committed table, with copies of its report and a compact result.
     - Findings go into a dated log with evidence links and confidence.
     - Investigations are tracked in a status table.
     - The spec is updated as findings change scope.
     - Each agent works in its own git worktree, and only the main session runs the game.
 
-12. **Native iteration.**
+11. **Native iteration.**
    - Cross-compile the fix DLL on Linux (clang-cl or mingw route, whichever builds the MASM stubs and SEH).
    - A thin permanent `version.dll` loader that loads a copied payload DLL and can unload and reload it on a trigger.
    - Each fix declares whether it can be uninstalled live. The ones that patch code at start-up only are reloaded only at game restart.
