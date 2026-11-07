@@ -22,7 +22,7 @@ State as of the pause on 2026-11-07. Read this first, then [LOG.md](LOG.md) (new
 - **For benchmarking**, set the launch option back to
   `/home/ExtraToast/Projects/oblivion-perffix-linux/linux/oblivion-launch.sh %command%` (Steam fully closed;
   `~/Projects/linux-gaming/scripts/set-launch-options.py 2623190 '...'`).
-- **Displays:** if GNOME falls back to 60 Hz landscape (it does when the TV joins), restore the layout with
+- **Displays:** the owner saved a 3-display layout in GNOME (TV on DP-1 included). Do not apply layouts with `gnome-monitor-config` that leave DP-1 out: the TV then sleeps and vanishes. Ask the owner instead.
   `gnome-monitor-config set -LM HDMI-2 -m 1920x1080@143.999 -t left -x 0 -y 0 -LpM HDMI-1 -m 2560x1440@144.006 -t normal -x 1080 -y 203`.
   The tool is in the nix store (`nixpkgs#gnome-monitor-config`).
 
