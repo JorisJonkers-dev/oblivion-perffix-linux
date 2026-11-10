@@ -1,0 +1,37 @@
+{
+ "diagFiles": [
+  "OblivionPerfFix.log",
+  "OblivionPerfFix-oscache-trace.bin"
+ ],
+ "dll": {
+  "path": "/home/ExtraToast/Projects/opf-run/build-linux/OblivionPerfFix.dll",
+  "sha256": "c1b57556106f84273e4b7b7116caa2e6aaf19e07433a13c780f4770abcc7bb3a",
+  "size": 1860608
+ },
+ "env": {
+  "MANGOHUD": "1",
+  "MANGOHUD_CONFIGFILE": "/home/ExtraToast/Projects/opf-run/linux/results/20261107-120140-dll3-gate-doors/mangohud.conf",
+  "OBLV_BENCH_MARKER": "/home/ExtraToast/Projects/opf-run/run/launch-marker.txt",
+  "OBLV_GAME_ARGS": "-FixedSeed",
+  "WINEDLLOVERRIDES": "version=n,b;dwmapi=n,b"
+ },
+ "fix": "on",
+ "fixIniOverrides": {
+  "OsPageCacheTrace": "1"
+ },
+ "label": "dll3-gate-doors",
+ "loadSec": null,
+ "outcome": "failed",
+ "profile": {
+  "description": "Your own settings as they are (resolution, window mode, upscaler, quality, frame cap): nothing is changed. Used by -Watch. Results depend on those settings, so say which ones you used when you share them",
+  "name": "own",
+  "own": true
+ },
+ "scenario": "cheydinhal",
+ "scenes": [],
+ "start": "continue",
+ "time": "2026-11-07 12:01:40",
+ "warnings": [
+  "run stopped: RuntimeError: the save did not load"
+ ]
+}

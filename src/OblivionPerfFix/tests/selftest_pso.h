@@ -359,6 +359,22 @@ static void Run(const GameModule& game)
     running(false);
     tick();
 
+    // PsoColdGuardWine: UE's queue is watched for a trend (no driver threads are visible under Wine)
+    fresh();
+    PsoPrecompileTestQueueTrend(100);
+    for (int i = 0; i < 10; ++i) PsoPrecompileTestQueueTrend(240);
+    tick();
+    Check(lastMode == 1 && !now().cold, "queue trend: a small queue (under 250) never trips the guard, however long it stays");
+    for (int64_t q : {900, 700, 500, 600, 700, 500, 300, 350}) PsoPrecompileTestQueueTrend(q);
+    tick();
+    Check(lastMode == 1 && !now().cold, "queue trend: a queue that keeps draining (or not for under 6 s) does not trip it");
+    for (int64_t q : {400, 420, 440, 460, 480, 500}) PsoPrecompileTestQueueTrend(q);
+    tick();
+    Check(lastMode == 0 && now().cold && strstr(now().coldWhy, "queue trend") == now().coldWhy,
+          "queue trend: 6 s of a queue over 250 that does not drain -> the game's own pace");
+    running(false);
+    tick();
+
     // the first precompile keeps a cold verdict the monitor thread made before the game thread's first look
     PsoPrecompileTestOriginal(reinterpret_cast<void*>(&FakeSetBatchMode));
     PsoPrecompileTestStatics(&fakeSize, &fakeTime, &fakeActive);
@@ -445,6 +461,150 @@ static void Run(const GameModule& game)
     tick();
     PsoPrecompileWatchDriver();
     PsoPrecompileTestStatics(info.batchSize, info.batchTime, info.active);
+
+
+    // ShaderGateBeforePlay: the first load after the main menu waits (its fade-gate tick is skipped) while the precompile runs
+    PsoPrecompileTestOriginal(reinterpret_cast<void*>(&FakeSetBatchMode));
+    PsoPrecompileTestStatics(&fakeSize, &fakeTime, &fakeActive);
+    PsoPrecompileTestPlayMs(50);
+    SetPsoPrecompileFast(true);
+    SetPsoPrecompileFastBudget(4.0f, 1000);
+    fakeActive = 0;
+    freezeThere = true;
+    running(true);
+    state(0, 0);
+    hook(0);
+    SetShaderGate(false, 600);
+    state(1, 0);
+    tick();
+    Check(!ShaderGateHoldsTick() && !PsoPrecompileGateHolding(), "shader gate: switched off: no tick held");
+    SetShaderGate(true, 600);
+    PsoPrecompileTestPlayMs(50);   // forgets the menus seen
+    state(0, 1);
+    tick();
+    fakeActive = 120;
+    Check(!ShaderGateHoldsTick(), "shader gate: the main menu not seen yet (the start-up's own transition): not held");
+    state(1, 0);
+    tick();
+    fakeActive = 0;
+    SetShaderGate(true, 600);
+    running(false);
+    Check(!ShaderGateHoldsTick() && !PsoPrecompileGateHolding(), "shader gate: precompile not running (queue empty): never held");
+    running(true);
+    fakeActive = 120;
+    Check(ShaderGateHoldsTick() && PsoPrecompileGateHolding(), "shader gate: main menu seen, precompile running, no play yet: the first load's gate tick is held");
+    state(0, 1);   // the loading screen
+    tick();
+    Check(lastMode == 1 && !now().bounded && ShaderGateHoldsTick(), "shader gate: on the loading screen UE's Fast values run, the tick stays held");
+    PsoPrecompileTestDriverBusy(1.0);
+    PsoPrecompileTestDriverBusy(1.0);
+    tick();
+    Check(now().cold && lastMode == 1, "shader gate: a cold-cache verdict does not slow the held loading screen (nobody interacts there)");
+    SetShaderGate(true, 600);
+    running(false);
+    Check(!ShaderGateHoldsTick() && !PsoPrecompileGateHolding() && strstr(PsoPrecompileGateEnd(), "precompile has finished"),
+          "shader gate: the precompile ends: released, \"finished\" given as the reason");
+    tick();
+    running(true);
+    state(1, 0);
+    Check(!ShaderGateHoldsTick(), "shader gate: only the first load is ever held");
+
+    PsoPrecompileTestGate(45000, 60);   // cap 60 ms
+    fakeActive = 50;
+    state(1, 0);
+    tick();
+    Check(ShaderGateHoldsTick(), "shader gate (cap): held at first");
+    Sleep(90);
+    Check(!ShaderGateHoldsTick() && !PsoPrecompileGateHolding() && strstr(PsoPrecompileGateEnd(), "cap reached"),
+          "shader gate (cap): never held longer than the cap (ShaderGateMaxSeconds), then the precompile goes on in play");
+    Check(!ShaderGateHoldsTick(), "shader gate (cap): and not held again");
+
+    PsoPrecompileTestGate(60, 0);   // "queue empty" release after 60 ms
+    fakeActive = 0;
+    tick();
+    Check(ShaderGateHoldsTick(), "shader gate (stall): held at first");
+    Sleep(90);
+    tick();
+    Check(!ShaderGateHoldsTick() && strstr(PsoPrecompileGateEnd(), "not progressing"),
+          "shader gate (stall): the flag set but UE's queue empty for a while: released, not a deadlock");
+
+    PsoPrecompileTestGate(60, 0);
+    fakeActive = 10;
+    tick();
+    Check(ShaderGateHoldsTick(), "shader gate (progress): held");
+    for (int i = 0; i < 5; ++i) {
+        Sleep(30);
+        fakeActive = i % 2 ? 0 : 20;
+        tick();
+    }
+    Check(ShaderGateHoldsTick(), "shader gate (progress): a queue that keeps moving is held beyond the stall time");
+
+    // the exact order seen live (2026-11-07 Continue and coc from the main menu): the menu closes, then seconds with no
+    // menu and no loading freeze, only then the gate is armed and its tick comes. That calm is not play: still held.
+    state(0, 0);
+    tick();
+    Sleep(70);
+    tick();
+    Check(PsoPrecompileGateHolding() && now().inPlay == 0 && ShaderGateHoldsTick(),
+          "shader gate (live order): calm after the held tick began is not play: still held, not in play");
+    Check(!PsoPlayStarted(), "shader gate (live order): PsoPlayStarted is false while the gate holds");
+    running(false);
+    tick();
+    Check(!ShaderGateHoldsTick() && !PsoPrecompileGateHolding() && strstr(PsoPrecompileGateEnd(), "precompile has finished"),
+          "shader gate (live order): released when the precompile finishes, not by the calm");
+    tick();
+    Check(now().inPlay == 1, "shader gate (live order): and after the release the calm counts as play");
+    Check(PsoPlayStarted(), "shader gate (live order): PsoPlayStarted (PsoRecordReplay's play signal) is true once the gate has released");
+    running(true);
+    Check(!ShaderGateHoldsTick(), "shader gate (live order): nothing held afterwards");
+
+    // the same, from the menu: menu -> load requested (menu closes, calm 3x the play threshold) -> precompile running
+    // -> the first gate tick holds -> the precompile ends -> released
+    SetShaderGate(true, 600);
+    PsoPrecompileTestPlayMs(50);
+    PsoPrecompileTestGate(45000, 0);
+    fakeActive = 120;
+    running(true);
+    state(1, 0);
+    tick();
+    state(0, 0);   // Continue / coc: the menu closes
+    tick();
+    Sleep(160);
+    tick();
+    Check(now().inPlay == 0 && lastMode == 1, "shader gate (menu to hold): the calm after the menu is a load under way, not play: the faster pace stays");
+    Check(ShaderGateHoldsTick() && PsoPrecompileGateHolding(), "shader gate (menu to hold): the first gate tick after that calm is held");
+    Check(ShaderGateHoldsTick() && ShaderGateHoldsTick(), "shader gate (menu to hold): and the next ticks");
+    running(false);
+    Check(!ShaderGateHoldsTick() && !PsoPrecompileGateHolding() && strstr(PsoPrecompileGateEnd(), "precompile has finished"),
+          "shader gate (menu to hold): the precompile ends: released");
+
+    // a first load with no precompile left: nothing to wait for, and play is then recognised as usual
+    PsoPrecompileTestPlayMs(50);
+    PsoPrecompileTestGate(45000, 0);
+    running(false);
+    state(1, 0);
+    tick();
+    state(0, 0);
+    tick();
+    Check(now().inPlay == 0, "shader gate (nothing to wait for): calm before the gate tick: not play yet");
+    Check(!ShaderGateHoldsTick() && !PsoPrecompileGateHolding(), "shader gate (nothing to wait for): precompile finished: the first tick is not held");
+    Sleep(70);
+    tick();
+    Check(now().inPlay == 1, "shader gate (nothing to wait for): then the calm is play");
+    running(true);
+    Check(!ShaderGateHoldsTick() && strstr(PsoPrecompileGateEnd(), "play has begun"), "shader gate: once play has begun nothing is held");
+    running(true);
+    SetShaderGate(true, 600);
+    PsoPrecompileTestGate(45000, 0);
+    state(1, 0);
+    tick();
+    SetPsoPrecompileFast(false);
+    Check(!ShaderGateHoldsTick(), "shader gate: PsoPrecompileFast off live: no hold");
+    SetPsoPrecompileFast(true);
+    SetShaderGate(false, 600);
+    running(false);
+    tick();
+    PsoPrecompileTestGate(45000, 0);
 
     *info.singleton = nullptr;
     PsoPrecompileTestOriginal(reinterpret_cast<void*>(&FakeSetBatchMode));

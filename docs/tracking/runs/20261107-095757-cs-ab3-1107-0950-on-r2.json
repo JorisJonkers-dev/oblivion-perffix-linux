@@ -1,0 +1,68 @@
+{
+ "diagFiles": [
+  "OblivionPerfFix-ledger.csv",
+  "OblivionPerfFix-ticksplit.csv",
+  "OblivionPerfFix.log"
+ ],
+ "dll": null,
+ "env": {
+  "MANGOHUD": "1",
+  "MANGOHUD_CONFIGFILE": "/home/ExtraToast/Projects/opf-run/linux/results/20261107-095757-cs-ab3-1107-0950-on-r2/mangohud.conf",
+  "OBLV_BENCH_MARKER": "/home/ExtraToast/Projects/opf-run/run/launch-marker.txt",
+  "OBLV_GAME_ARGS": "-FixedSeed",
+  "WINEDLLOVERRIDES": "version=n,b;dwmapi=n,b"
+ },
+ "fix": "on",
+ "fixIniOverrides": {
+  "HitchLedger": "1",
+  "HitchLedgerTickSplit": "1"
+ },
+ "label": "cs-ab3-1107-0950-on-r2",
+ "loadSec": 48.0,
+ "outcome": "ok",
+ "profile": {
+  "description": "Your own settings as they are (resolution, window mode, upscaler, quality, frame cap): nothing is changed. Used by -Watch. Results depend on those settings, so say which ones you used when you share them",
+  "name": "own",
+  "own": true
+ },
+ "scenario": "cheydinhal",
+ "scenes": [
+  {
+   "avgMs": 14.29,
+   "cond": {
+    "atEnd": "hour=12.008 wx=Clear:1.00 npcs=6 near=BP_CheydinhalGuardCityPatrolNight01@123767,91043;BP_MS10CheydinhalHouseGuard01@122863,89512;BP_Ohtimbar@123925,91924",
+    "atSet": "hour=12.001 wx=Clear:1.00",
+    "hour": "12",
+    "pinned": true,
+    "timescale": "1",
+    "weather": "Clear"
+   },
+   "cpuLoad": 51.6,
+   "fps": 70.0,
+   "frames": 1400,
+   "gpuLoad": 98.2,
+   "hitchMs": 0,
+   "hitches": 0,
+   "hour": "12.01",
+   "id": "chapel-square-noon",
+   "level": "L_CheydinhalWorld",
+   "longestGapMs": 18.8,
+   "low01": 54.1,
+   "low1": 58.3,
+   "over100": 0,
+   "over250": 0,
+   "over50": 0,
+   "p50Ms": 13.58,
+   "p95Ms": 16.7,
+   "p999Ms": 18.48,
+   "p99Ms": 17.16,
+   "seconds": 20.001,
+   "sub": "",
+   "type": "static",
+   "worstMs": 18.8
+  }
+ ],
+ "start": "fresh",
+ "time": "2026-11-07 09:57:57",
+ "warnings": []
+}

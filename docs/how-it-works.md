@@ -474,6 +474,10 @@ ms, frames of 25 ms or more 17-22 -> 12-14.
 
 [Evidence](research.md#ospagecache).
 
+*Tuning (Proton / any PC):* the cap and the keep time are the keys `OsPageCacheMB` (default 64) and `OsPageCacheKeepMs` (default 5000). The stats line also prints hits, misses, kept and released blocks per size class (`[oscache] by size`), because on the Linux test runs only 17-44% of requests were hits with ~10,000 releases over the cap; whether a bigger cap helps is for an A/B run to say, so the default is unchanged.
+
+*Recording and replaying (`OsPageCacheTrace`):* `OsPageCacheTrace=1` writes every block request and release the list sees (time, size, reused / kept / released) to `OblivionPerfFix-oscache-trace.bin` next to the DLL, a ring of `OsPageCacheTraceMB` (64) megabytes. `tools/oscache_sim.py` replays it against other caps, keep times, size rounding and eviction rules without starting the game, and `linux/oscache-bench.sh` measures what a miss costs under Wine. Method and results: [research-linux/ideas/oscache-sim.md](research-linux/ideas/oscache-sim.md).
+
 **The problem.** Unreal's memory manager gets its memory from Windows in blocks (64 KB pages for small objects, and
 blocks of up to 16 MB for bigger arrays). When a block is no longer needed it goes onto a short list of spare blocks,
 and the next request of exactly that size takes one from the list. The list holds only 64 blocks. With many threads and
@@ -563,6 +567,18 @@ and switches them on and off.
 ---
 
 <a id="vtstreaminguploads"></a>
+
+### Textures sharper when the loading screen ends (`StreamPrewarmBehindLoading`, off)
+
+After stepping outside, textures keep sharpening for several seconds, because the game limits how many texture pages it
+uploads and produces per frame while you play. Behind the loading screen the graphics card has room. With the switch on,
+once `StreamBehindLoadingScreen` sees the new area's loading is idle, the limits for virtual texture uploads and tiles
+per frame and the texture streamer's update interval are looked up by name and set to faster values (never slower than
+the current ones, each at the priority it already has); when the game's fade-to-game runs, each is set back to exactly
+the value it had, unless the game changed it meanwhile. `StreamPrewarmMaxHoldMs` can keep the loading screen up a little
+longer (in half-second steps, at most 3 s) so they have longer to work. Only the speed changes, not the finished picture.
+The log prints what was raised, the window's length and the streamer updates; the streamer's pending-request count is not
+available in this build.
 
 ### Walls and roofs sharp sooner after a door (`VtStreamingUploads`, trade-off, off)
 
@@ -1313,6 +1329,8 @@ you walk away, switch it off.
 ### Start-up shaders built faster in menus (`PsoPrecompileFast`)
 
 [Evidence](research.md#psoprecompilefast).
+
+*Under Wine / Proton:* the guard's driver-thread check looks for threads named "D3D Background Thread" in the Windows thread list. Mesa's / vkd3d-proton's compile threads are Linux threads that Wine does not list, so every Proton run logged "no driver compile threads found" and that check never worked. `PsoColdGuardWine=1` (default, Wine only) replaces it with a proxy: UE's own queue of fetched, not yet dispatched pipelines (warm-cache runs peak at 86-120) is read once a second, and a queue of at least 250 that did not shrink by 5% in any of 6 seconds in a row marks the precompile slow, handing the game its own pace as the other guards do. No reliable direct signal for the Mesa/Fossilize compile exists on the Windows side, so this is a guess to be checked on a cold cache (`rm` the Mesa shader cache and the game's `vkd3d` pipeline cache, run, read the `[pso]` lines); a wrong verdict only gives up the faster pace.
 
 **The problem.** After every start the game builds about 18,000 graphics pipelines (each a combination of shaders and
 render states it will draw with: 15,551 from the game's own list, then 2,536 from a second list, most likely the one the
@@ -2096,6 +2114,12 @@ much lower frame rate with the key on. There it is left to the game, as without 
 
 <a id="shaderscreenafterdriverchange"></a>
 
+### Pipelines created in play, recorded and replayed (`PsoRecordReplay`, off until measured)
+
+The start-up precompile covers the pipelines the game's own cache lists. While you play, Unreal asks for more (a cell's meshes, a character's materials); each request ends in a D3D12 pipeline creation, which under Proton is a real Vulkan compile unless the driver caches already hold it, and the object may stay hidden until it is done. With `PsoRecordReplay=1` (set at start-up: the DLL redirects `D3D12CreateDevice` in d3d12.dll as it is mapped, so the game's own device is hooked as it is created; a "WARNING: hook sees no game PSO creations" log line means it failed) the DLL watches the game's device for these creations once play has begun, times them (`[psorec] in play: N new PSOs, total X ms, max Y ms`, every 60 s) and writes each new description to `OblivionPerfFix-psorecord.bin` next to the DLL: the plain state fields, the game's own shader bytecode (deduplicated, kept only on your PC, never shipped), the input layout and the root signature. At the next start, as soon as the device exists, helper threads create each recorded pipeline once and release it, which makes vkd3d-proton and Mesa compile and cache it; the shader gate keeps the first load on its loading screen until that is done (same cap). Play then finds them already built. Nothing else changes; a pipeline that cannot be recreated is skipped. `2` only measures; `PsoRecordMaxMB` (512) bounds the file (shader bytecode is stored once per hash and compressed). A game update starts an empty file.
+
+*Limits:* a pipeline whose root signature was created before the hook was in is not recorded (counted as "unknown"); on a warm persistent cache the gain is only the cache-hit cost moved out of play, which the stats line shows before you rely on it.
+
 ### The shader screen comes back after a driver update (`ShaderScreenAfterDriverChange`, game bug)
 
 [Evidence](research.md#shaderscreenafterdriverchange).
@@ -2125,6 +2149,22 @@ counts on the driver's cache to bring it back cheaply. With that cache switched 
 be built again during play. After a real driver update the cache is empty but works, which is what this switch is for.
 
 <a id="vramcounterfix"></a>
+
+**On Linux (Proton).** There the graphics driver version Windows programs can see is a constant (35.0.65535.65535), so
+the note above never changes when Mesa, vkd3d-proton or Proton is updated, or when the shader caches are deleted, and
+the game builds its shaders during play. `ShaderScreenLinuxFingerprint` (1, only under Wine) adds what a Windows
+process can still read through the `Z:` drive and the environment: the Wine and Proton versions, a hash of
+vkd3d-proton's `d3d12core.dll`, the Vulkan driver files (name, size, time, the Mesa version where the path contains
+it, as on NixOS) and the sizes of the vkd3d-proton cache files and Mesa's shader cache. A different line, or a cache
+under half its recorded size, brings the shader screen back at the next start, like a driver update. An older
+card-only note is extended without a screen.
+
+**Why the screen cannot be used for every launch.** The game decides it once, at the very start, before its pipeline
+cache exists, so how much is left to build is unknown. The screen comes from what changed. For everything else there is
+`ShaderGateBeforePlay`: under Wine the first load after the main menu waits on its loading screen while the precompile
+still runs (the game's fade gate, a 0.5 s timer, is skipped; the same mechanism as `UnfreezeBehindLoadingScreen`).
+The precompile runs at the engine's fast pace meanwhile. It is released when the precompile ends, after
+`ShaderGateMaxSeconds` (600) or when the engine's queue has been empty for 45 s; it never holds a later load.
 
 ### The "Show VRAM" counter shows real numbers (`VramCounterFix`)
 
@@ -2191,6 +2231,8 @@ every fix), those fixes behave
 as the game does, the automatic parallel translation stays off, and
 `CommandAllocatorTrim` gives spare command memory back after every load. The log says what it found and why. `SharedMemoryGpu=0`
 turns this off, `1` forces it on any PC.
+
+*Under Wine / Proton:* the question was skipped there (Linux handles low memory its own way). Since `SharedMemoryGpuWine=1` (default) it is asked under Wine too, because vkd3d-proton answers `D3D12_FEATURE_ARCHITECTURE1`; a Steam Deck or APU then counts as UMA, and a discrete card (RX 7900 XTX) answers "not UMA" and nothing changes. `SharedMemoryGpuWine=0` restores the old skip.
 
 **Why the image can't change.** The fixes involved only keep or give back memory; with this they take the game's own
 paths, which draw the same picture.
@@ -2265,6 +2307,29 @@ updates per frame (within the noise); with the switch at 0 at start-up nothing i
 install (with OBSE64 it stays off); `tools/tick_split.py` is in the GitHub repository, not in the mod's zips. It helped
 us confirm where the horse corral's time went (stack samples named the cause) for `PhysAnimNoEmptyLock` and
 `RigTraceReuse`.
+
+**The old engine's thread** (`OtProfile`, `OtCrashContext`, off by default). The game's original 2006 engine runs on its
+own thread, one frame at a time, and the modern engine's main thread waits for it at the start of its frame (and it waits for
+the main thread at the end of its own): a slow old-engine frame shows up as the main thread's "pair" time in the ledger. With
+`OtProfile=1` at start-up the DLL measures that thread without changing anything it does. For every old-engine frame it records
+how long the thread was busy and how long it sat idle waiting for the main thread, how long the main thread waited for it
+(not while `NpcCreationPacing` is on: that fix uses the same call, and the ledger's pair column has the number then), and where
+the busy time went: the passes over all characters (the main update and its four levels, the passes before and after it), the
+cell-grid change (not while `CellBufferPacedEvict` is on, for the same reason), the arrival/door handler, the water update and
+the save entry. It does this by sending those calls through small timing stubs (a clock read before and after, the game's own
+function in between) and by reading the engine's own "which stage am I in" number a thousand times a second, which names the
+stage of a slow frame that the stubs do not cover. Slow frames (busy time at or over `OtProfileMs`, 10 ms) and 2-second totals
+go to `OblivionPerfFix-otprofile.csv` next to the log, in the same clock as the ledger so a tool can line them up; `python
+tools/ot_profile.py <csv>` ranks the stages and shows busy against waiting. About a microsecond per frame in the self-test.
+`OtCrashContext=1` installs a handler that is only interested in faults (access violation, illegal instruction, stack
+overflow, ...) on that thread: it writes the stage number, the stage in progress, the last completed stages, the recent stage
+numbers and the call stack as `exe+offset` to the log, then lets the exception go on to the game's own handling as if it had
+not been there (the first line says that the fault may be one the game handles itself). Start-up only (`version.dll` install),
+then the ini switches recording and the handler live; with both at 0 nothing is installed.
+
+### The ini is read only when it changes
+
+Switching a key live works by a monitor thread that once a second re-reads `OblivionPerfFix.ini`. Reading ~114 keys one by one opens and parses the file each time (Windows' `GetPrivateProfileInt`), which under Wine / Proton is a round trip to the wineserver per key, about 114 a second for nothing while the file does not change. Now the thread asks Windows once a second for the file's size and last-write time (`GetFileAttributesExW`) and parses it only when one of them changed. A file written within the last 2 seconds is parsed again regardless, so an editor still writing, or a coarse timestamp, can never leave half a file in force. A change still lands within about a second; a missing ini keeps the defaults and is not retried every second. Always on, no key; a pure saving of work with the same values.
 
 ## All together (Cheydinhal, 720p, FSR Performance, frame generation off)
 

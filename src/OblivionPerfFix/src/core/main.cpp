@@ -5,6 +5,7 @@
 // If both are installed, only the first one to load applies the fixes.
 #include "common.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cwchar>
 #include <string>
@@ -125,9 +126,11 @@ bool TranslateWanted(const Config& cfg, bool sharedGpu, unsigned seconds)
 
 DWORD WINAPI MonitorThread(LPVOID)
 {
+    Config cached = LoadConfig(g_iniPath.c_str());
     for (unsigned seconds = 1;; ++seconds) {
         Sleep(1000);
-        const Config cfg = LoadConfig(g_iniPath.c_str());
+        LoadConfigIfChanged(g_iniPath.c_str(), &cached);  // parses only when the ini's size or time changed
+        const Config cfg = cached;
         // MemoryRelief: while Windows is short of memory, the fixes that keep memory on purpose give it back.
         MemoryRelief relief;
         UpdateMemory(cfg, &relief);
@@ -194,8 +197,11 @@ DWORD WINAPI MonitorThread(LPVOID)
         SetDoorDiagEarlyStream(cfg.doorDiagEarlyStream);     // diagnostic DoorDiag's experiment (no-op unless installed)
         SetFadeVtFlushSkip(cfg.fadeVtFlushSkip);             // FadeVtFlushSkip (no-op unless installed)
         SetStreamBehindLoading(cfg.streamBehindLoading);     // StreamBehindLoadingScreen: no-op unless installed at start-up
+        SetStreamPrewarm(cfg.streamPrewarm, cfg.streamPrewarmMaxHoldMs, cfg.vtStreamingUploads > 0);  // StreamPrewarmBehindLoading (no-op unless StreamBehindLoadingScreen is installed)
         SetUnfreezeBehindLoading(cfg.unfreezeBehindLoading); // prototype UnfreezeBehindLoadingScreen (trade-off; 0 = off)
         SetUnfreezeBehindLoadingFastTravel(cfg.unfreezeBehindLoadingFastTravel);  // ... its own hold after a fast travel (0 = the same)
+        SetOtProfile(cfg.otProfile, cfg.otProfileMs, cfg.otProfileSampleHz, cfg.otCrashContext);  // no-op unless installed at start-up
+        OtProfileDrain();                                    // ... its slow cycles into OblivionPerfFix-otprofile.csv
         HitchLedgerDrain();                                  // ... its slow-frame records into OblivionPerfFix-ledger.csv
         if (g_clothRegHooked) SetClothRegisterLite(cfg.clothRegisterLite);  // ClothRegisterLite: live once installed
         SetClothBuildDefer(cfg.clothBuildDefer, cfg.clothDeferQuietFrames);  // ClothBuildDefer: live once installed (no-op otherwise)
@@ -214,11 +220,15 @@ DWORD WINAPI MonitorThread(LPVOID)
         if (g_npcBodies) SetNpcBodiesOneLock(cfg.npcBodiesOneLock);  // NpcBodiesOneLock: live once installed
         SetRtSceneKeep(relief.shared && cfg.rtSceneBufferKeep ? 2 : cfg.rtSceneBufferKeep);  // RtSceneBufferKeep: live once installed (no-op otherwise); 2 = the game's way
         SetRayTracingBuildBatch(cfg.rayTracingBuildBatch);  // RayTracingBuildBatch: live once installed (no-op otherwise)
-        SetOsPageCache(relief.shared ? 0 : cfg.osPageCache, cfg.osPageCacheMB, cfg.osPageCacheTrimSeconds, relief.osCache);  // OsPageCache: no-op unless installed
+        SetOsPageCache(relief.shared ? 0 : cfg.osPageCache, cfg.osPageCacheMB, cfg.osPageCacheTrimSeconds, relief.osCache,
+                       cfg.osPageCacheKeepMs, cfg.osPageCacheTrace ? (std::clamp)(cfg.osPageCacheTraceMB, 4, 1024) : 0);  // OsPageCache: no-op unless installed
         SetPsoPrecompileFast(cfg.psoPrecompileFast);  // PsoPrecompileFast: no-op unless installed at start-up
         SetPsoPrecompileFastInGameMenus(cfg.psoPrecompileFastInGameMenus);
         SetPsoPrecompileFastBudget(static_cast<float>(cfg.psoPrecompileFastBudgetMs < 1 ? 1 : cfg.psoPrecompileFastBudgetMs),
                                    cfg.psoPrecompileColdQueue < 0 ? 0 : cfg.psoPrecompileColdQueue);
+        SetPsoColdGuardWine(cfg.psoColdGuardWine);
+        SetShaderGate(ShaderGateWanted(cfg) && ShaderGateHooked(), static_cast<uint32_t>(cfg.shaderGateMaxSeconds));  // ShaderGateBeforePlay: live once its hook is in
+        PsoRecordTick(cfg.psoRecordReplay, cfg.psoRecordMaxMB, cfg.psoRecordMinMs, cfg.psoReplayThreads, Directory(g_iniPath).c_str());  // PsoRecordReplay (no-op at 0)
         PsoPrecompileWatchDriver();  // the cold-cache guard's driver-thread reading (no-op unless installed and precompiling)
         SetAnimTeardownParallel(ParallelHelpersAllowed(cfg) ? cfg.animTeardownParallel : 0);    // AnimTeardownParallel: no-op unless installed at start-up
         SetCellBufferPacedEvict(cfg.cellBufferPacedEvict);    // CellBufferPacedEvict: no-op unless installed at start-up
@@ -309,6 +319,7 @@ DWORD WINAPI MonitorThread(LPVOID)
             LogDoorDiagStats();
             LogFadeVtFlushStats();
             LogStreamBehindLoadingStats();
+            LogStreamPrewarmStats();
         }
     }
 }
@@ -503,11 +514,13 @@ void Init(const char* loadedVia, bool proxyOk, bool beforeGameCode)
         if (ApplyReadbackConvertFix(beforeGameCode)) SetReadbackConvertMode(cfg.screenshotReadbackConvert);
     } else Log("[readback] disabled in OblivionPerfFix.ini (takes a restart to switch on)");
     // OsPageCache: installed only if enabled at startup (the lab trace installs it too); afterwards the ini switches it live.
-    const int osTrace = 0;
+    const int osTrace = cfg.osPageCacheTrace ? (std::clamp)(cfg.osPageCacheTraceMB, 4, 1024) : 0;
     if (cfg.osPageCache || osTrace) {
         if (InstallOsPageCache(beforeGameCode, Directory(g_iniPath).c_str(), osTrace))
-            SetOsPageCache(cfg.osPageCache, cfg.osPageCacheMB, cfg.osPageCacheTrimSeconds, false);
+            SetOsPageCache(cfg.osPageCache, cfg.osPageCacheMB, cfg.osPageCacheTrimSeconds, false, cfg.osPageCacheKeepMs, osTrace);
     } else Log("[oscache] disabled in OblivionPerfFix.ini (takes a restart to switch on)");
+    // PsoRecordReplay: d3d12.dll's D3D12CreateDevice redirected as soon as the DLL is mapped (start-up only; the monitor thread does the rest).
+    if (cfg.psoRecordReplay > 0) PsoRecordInstallEarly(cfg.psoRecordReplay);
     // PsoPrecompileFast: SetBatchMode's entry detour, installed only if enabled at startup; afterwards the ini switches it live.
     if (cfg.psoPrecompileFast) {
         SetPsoPrecompileFastBudget(static_cast<float>(cfg.psoPrecompileFastBudgetMs < 1 ? 1 : cfg.psoPrecompileFastBudgetMs),
@@ -611,6 +624,7 @@ void Init(const char* loadedVia, bool proxyOk, bool beforeGameCode)
         Log("[push] PhysicsPushParallel kept off: %u usable logical processors (needs %d, ParallelMinProcessors)", UsableLogicalProcessors(), cfg.parallelMinProcessors);
     else Log("[push] off in OblivionPerfFix.ini (takes a restart to switch on)");
     // ShaderScreenAfterDriverChange (game bug): installed only if on at start-up (the decision is made once, early).
+    SetShaderScreenLinux(cfg.shaderScreenLinux);
     if (cfg.shaderScreenAfterDriverChange) ApplyShaderScreenAfterDriverChange(beforeGameCode, dir.c_str());
     else Log("[shaderscreen] ShaderScreenAfterDriverChange off in OblivionPerfFix.ini (takes a restart to switch on)");
     // Diagnostic HitchLedger: installed only if on at startup (the tick-group entry detour, before BulkIndexInsert, whose lab
@@ -637,8 +651,12 @@ void Init(const char* loadedVia, bool proxyOk, bool beforeGameCode)
     // NpcCreationPacing's frame hook); afterwards the ini switches it live.
     if (cfg.streamBehindLoading) {
         if (!g_pacingHooked) Log("[streamload] NpcCreationPacing's frame hook is not installed: not installed");
-        else if (InstallStreamBehindLoading(beforeGameCode, cfg.unfreezeBehindLoading != 0)) SetStreamBehindLoading(true);
+        else if (InstallStreamBehindLoading(beforeGameCode, cfg.unfreezeBehindLoading != 0 || cfg.streamPrewarmMaxHoldMs > 0,
+                                            ShaderGateWanted(cfg) && cfg.psoPrecompileFast)) SetStreamBehindLoading(true);
     } else Log("[streamload] StreamBehindLoadingScreen off in OblivionPerfFix.ini (takes a restart to switch on)");
+    if (ShaderGateWanted(cfg) && !ShaderGateHooked())
+        Log("[gate] ShaderGateBeforePlay is on but not installed (needs PsoPrecompileFast and StreamBehindLoadingScreen, found at start-up): "
+            "the precompile may still run on into play");
     // AnimTeardownParallel: three calls redirected, only if not 0 at startup; afterwards the ini switches it live.
     if (cfg.animTeardownParallel && ParallelHelpersAllowed(cfg)) {
         if (InstallAnimTeardownParallel(beforeGameCode)) SetAnimTeardownParallel(ParallelHelpersAllowed(cfg) ? cfg.animTeardownParallel : 0);
@@ -773,6 +791,12 @@ void Init(const char* loadedVia, bool proxyOk, bool beforeGameCode)
     // ChaosMaxPayloadSize: p.MaxPayloadSize before the engine reads its settings and before any physics scene (start-up,
     // both routes; only over the game's 100000; an Engine.ini value applied later wins).
     SetChaosMaxPayloadSize(cfg.chaosMaxPayloadSize, beforeGameCode);
+    // Diagnostic OtProfile / OtCrashContext: call sites of the old engine's thread redirected to timing stubs, only if on at
+    // startup; last, so every fix that reads those call sites has seen the game's own bytes. Then live.
+    if (cfg.otProfile || cfg.otCrashContext) {
+        if (InstallOtProfile(beforeGameCode, dir.c_str(), cfg.otProfile, cfg.otCrashContext, g_pacingHooked, cfg.cellBufferPacedEvict == 0))
+            SetOtProfile(cfg.otProfile, cfg.otProfileMs, cfg.otProfileSampleHz, cfg.otCrashContext);
+    }
 
     {
         // Start-up cost: the whole Init and its pattern searches (OBSE route: the game's main thread waits for it).

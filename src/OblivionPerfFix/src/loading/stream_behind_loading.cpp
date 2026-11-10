@@ -190,7 +190,7 @@ struct State {
     std::atomic<uint32_t> transitions{0}, streamed{0};
     std::atomic<uint64_t> leadUs{0};
     // the world drawing for UnfreezeBehindLoadingScreen (found / hooked optionally; the rest works without it)
-    bool drawFound = false, drawHooked = false;
+    bool drawFound = false, drawHooked = false, gateHooked = false;   // gateHooked: ShaderGateBeforePlay's skip is in the slots
     void** execSlot = nullptr;
     void** execIfSafeSlot = nullptr;
     ExecFn origExec = nullptr;
@@ -224,6 +224,7 @@ struct State {
     uint64_t doneUs = 0;
     std::atomic<uint32_t> saveLoads{0};
     std::atomic<uint32_t> fastTravels{0};
+    uint32_t prewarmHeld = 0;  // gate ticks skipped for StreamPrewarmMaxHoldMs, this transition
 };
 State g;
 
@@ -560,8 +561,14 @@ void FastTravelFadeHook(void* mapMenu, uint32_t delay)
 // screen). The gate is a looping timer: a skipped tick simply comes again 0.5 s later.
 bool HoldGate(void* delegateInstance)
 {
-    if (!g.drawing || !g.lcd) return false;
+    if (!g.lcd) return false;
     if (*reinterpret_cast<uint8_t**>(static_cast<uint8_t*>(delegateInstance) + kGateCapture) != g.lcd) return false;
+    // StreamPrewarmBehindLoading's extra hold: until the streaming has run StreamPrewarmMaxHoldMs
+    if (g.started && StreamPrewarmActive()) {
+        const int pms = StreamPrewarmHoldMs();
+        if (pms > 0 && NowUs() - g.startUs < static_cast<uint64_t>(pms) * 1000) { ++g.prewarmHeld; return true; }
+    }
+    if (!g.drawing) return false;
     const int ums = UnfreezeMs();
     const uint64_t now = NowUs();
     const bool runWait = g.unfrozen && ums > 0 && g.runUs < static_cast<uint64_t>(ums) * 1000;
@@ -574,12 +581,14 @@ bool HoldGate(void* delegateInstance)
 
 void ExecHook(void* delegateInstance)
 {
+    if (g.gateHooked && ShaderGateHoldsTick()) return;
     if (HoldGate(delegateInstance)) return;
     g.origExec(delegateInstance);
 }
 
 bool ExecIfSafeHook(void* delegateInstance)
 {
+    if (g.gateHooked && ShaderGateHoldsTick()) return true;   // bound and safe; the tick just did nothing
     if (HoldGate(delegateInstance)) return true;  // bound and safe; the tick just did nothing
     return g.origExecIfSafe(delegateInstance);
 }
@@ -627,6 +636,8 @@ uint64_t ArmHook(void* transition)
         g.drawing = false;
         g.drawStartUs = g.holdStartUs = 0;
         g.heldTicks = g.reHidden = 0;
+        g.prewarmHeld = 0;
+        StreamPrewarmEnd(g.updates);  // a transition that never reached fade-to-game: budgets back
         g.unfrozen = false;
         g.unfreezeUs = g.runUs = g.runTickUs = g.firstRunUs = 0;
         g.armUs = NowUs();
@@ -664,7 +675,9 @@ bool FindStreamBehindLoading(StreamBehindLoadingInfo* out)
     return true;
 }
 
-bool InstallStreamBehindLoading(bool beforeGameCode, bool tradeOffs)
+bool ShaderGateHooked() { return g.gateHooked; }
+
+bool InstallStreamBehindLoading(bool beforeGameCode, bool tradeOffs, bool shaderGate)
 {
     if (g.installed) return true;
     if (!FindStreamBehindLoading(nullptr)) return false;
@@ -692,6 +705,20 @@ bool InstallStreamBehindLoading(bool beforeGameCode, bool tradeOffs)
     // only change to the game's code is the gate-arming detour above.
     g.loadHookTried = !tradeOffs;
     if (!tradeOffs) {
+        // ShaderGateBeforePlay alone: just the gate delegate's two slots (pass-through unless the precompile asks to hold a tick)
+        if (shaderGate && g.drawFound) {
+            if (WritePointer(g.execSlot, reinterpret_cast<void*>(&ExecHook)) &&
+                WritePointer(g.execIfSafeSlot, reinterpret_cast<void*>(&ExecIfSafeHook))) {
+                g.gateHooked = true;
+                Log("[streamload] ShaderGateBeforePlay: the fade gate's tick (slots exe+0x%X/+0x%X) can be held while the shader precompile runs",
+                    Rva(g.execSlot), Rva(g.execIfSafeSlot));
+            } else {
+                WritePointer(g.execSlot, reinterpret_cast<void*>(g.origExec));
+                Log("[streamload] ShaderGateBeforePlay: writing the gate delegate's slots failed: not available");
+            }
+        } else if (shaderGate) {
+            Log("[streamload] ShaderGateBeforePlay: the gate delegate's slots were not found: not available");
+        }
         g.installed = true;
         Log("[streamload] installed: textures of a new area stream behind the loading screen once its loading is done "
             "(UnfreezeBehindLoadingScreen 0 at start-up: its hooks not installed; takes a restart to switch on)");
@@ -701,6 +728,7 @@ bool InstallStreamBehindLoading(bool beforeGameCode, bool tradeOffs)
         if (WritePointer(g.execSlot, reinterpret_cast<void*>(&ExecHook)) &&
             WritePointer(g.execIfSafeSlot, reinterpret_cast<void*>(&ExecIfSafeHook))) {
             g.drawHooked = true;
+            g.gateHooked = shaderGate;
         } else {
             WritePointer(g.execSlot, reinterpret_cast<void*>(g.origExec));
             Log("[streamload] UnfreezeBehindLoadingScreen: writing the gate delegate's slots failed: not available");
@@ -768,6 +796,10 @@ void StreamBehindLoadingFrameEnd()
             Log("[streamload] fade-in %.0f ms after streaming started (%u updates, %.2f ms each)", lead / 1000.0, g.updates,
                 g.updates ? g.updateUs / 1000.0 / g.updates : 0.0);
         }
+        if (StreamPrewarmActive()) {
+            if (g.prewarmHeld) Log("[prewarm] gate held %u tick(s) for StreamPrewarmMaxHoldMs", g.prewarmHeld);
+            StreamPrewarmEnd(g.updates);
+        }
         if (g.drawing) {
             Log("[streamload] UnfreezeBehindLoadingScreen: world drawn %.0f ms behind the loading screen before the fade-in; "
                 "gate held %u tick(s) (%.0f ms); hidden again by the game %u time(s)", (NowUs() - g.drawStartUs) / 1000.0,
@@ -814,6 +846,7 @@ void StreamBehindLoadingFrameEnd()
         g.started = true;
         g.startUs = NowUs();
         g.streamed.fetch_add(1, std::memory_order_relaxed);
+        StreamPrewarmBegin(*g.cvarStatic);
         const bool unfreeze = g.setLoadingFreeze && UnfreezeMs() > 0 && LoadingFlag(g.lcd);
         if (g.drawHooked && unfreeze && DrawFlag(g.lcd)) {
             SetWorldHidden(g.lcd, false);

@@ -1,0 +1,536 @@
+"""bench.py spin: one game session at one spot, the camera turning in full laps, settings flipped live in ABBA
+order (see spin.py for the logic that needs no game). Reuses Runner for the start, the scene set-up and the
+clean-up; only the part between 'in the world' and 'quit' is its own."""
+import json
+import re
+import shutil
+import statistics
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from . import detail, dllvariant, diagwin, fixini, imgcmp, scenario, spin, spinshots, turnsettle
+from .paths import REPO
+from .runner import Options, Runner
+
+SHIPPED_INI = REPO / "src" / "OblivionPerfFix" / "OblivionPerfFix.ini"
+INI_WAIT = 1.5              # the DLL re-reads its ini every second
+CAM_TOL = 0.3               # degrees the camera read-back may differ from the requested heading / pitch
+STILL_GAP = 0.15            # seconds between the two grabs that decide whether the picture is still
+CAM_RE = re.compile(r"heading=(-?[\d.]+) pitch=(-?[\d.]+)")
+
+
+class SpinOptions(Options):
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.variants = kw.get("variants") or [spin.Variant("base")]
+        self.rounds = int(kw.get("rounds", 2))
+        self.laps = int(kw.get("laps", 2))
+        self.settle = float(kw.get("settle", 4))
+        self.deg_per_sec = float(kw.get("deg_per_sec", 30))
+        self.pitch = float(kw.get("pitch", 0))
+        self.look_interval = float(kw.get("look_interval", 0.075))
+        self.cam_lag = float(kw.get("cam_lag", 0.3))
+        self.pos = kw.get("pos")                      # (x, y, z) or None
+        self.heading = kw.get("heading")
+        self.world = kw.get("world")
+        self.cell = kw.get("cell")
+        self.hour = kw.get("hour")
+        self.weather = kw.get("weather")
+        self.shots = bool(kw.get("shots", False))
+        self.shot_headings = [float(h) for h in (kw.get("shot_headings") or spinshots.DEFAULT_HEADINGS)]
+        self.shot_settle = float(kw.get("shot_settle", 1.0))
+        self.shot_width = int(kw.get("shot_width", 960))
+        self.shot_pairs = int(kw.get("shot_pairs", 2))
+        self.shot_still = float(kw.get("shot_still", 1.0))        # max mean |difference| of two grabs to call it still
+        self.shot_register = bool(kw.get("shot_register", True))
+        self.shot_search = int(kw.get("shot_search", 24))
+        self.shot_step = int(kw.get("shot_step", 2))
+        self.diff_thresh = int(kw.get("diff_thresh", 24))
+        self.diff_gain = int(kw.get("diff_gain", 4))
+        self.turn_settle = bool(kw.get("turn_settle", False))
+        self.turn_headings = [float(h) for h in (kw.get("turn_headings") or turnsettle.DEFAULT_HEADINGS)]
+        self.turn_hold = float(kw.get("turn_hold", 4.0))
+        self.turn_from = kw.get("turn_from", "back")
+        self.turn_interval = float(kw.get("turn_interval", 0.1))
+        self.turn_secs = float(kw.get("turn_secs", 3.0))
+        self.turn_width = int(kw.get("turn_width", 320))
+        self.turn_thresholds = kw.get("turn_thresholds") or {}
+        self.turn_capturer_factory = kw.get("turn_capturer_factory")     # tests: a fake window grabber
+        self.thresholds = {**spin.THRESHOLDS, **(kw.get("thresholds") or {})}
+        self.capturer_factory = kw.get("capturer_factory")        # tests: a fake window grabber
+
+
+class SpinRunner(Runner):
+    def __init__(self, paths, opts, say=print):
+        super().__init__(paths, opts, say)
+        self.timeline = spin.Timeline()
+        self.slots = []
+        self.spot = ""
+        self.t_spin0 = None
+        self.h0 = 0.0
+        self.ini_now = {}
+        self.cvar_now = {}
+        self.order = []
+        self.shot_cap = None
+        self.shot_log = []
+        self.turn_cap = None
+        self.turn_log = []
+        self.turn_grab_ms = []
+        self.turn_dts = []
+
+    # ------------------------------------------------------------ planning
+
+    def plan(self, scn):
+        o = self.o
+        if o.deg_per_sec <= 0:
+            raise spin.SpinError("--deg-per-sec must be positive")
+        if o.laps < 1:
+            raise spin.SpinError("--laps must be at least 1")
+        if o.shots and o.shot_settle < 0:
+            raise spin.SpinError("--shot-settle must not be negative")
+        if o.turn_settle:
+            if o.turn_from not in turnsettle.FROM_MODES:
+                raise spin.SpinError("--turn-from must be back or side")
+            if o.turn_hold < 0 or o.turn_interval <= 0 or o.turn_secs < 1.0:
+                raise spin.SpinError("--turn-hold must not be negative, --turn-interval positive, --turn-secs >= 1")
+        if o.pos:
+            if bool(o.world) == bool(o.cell):
+                raise spin.SpinError("--pos needs exactly one of --world NAME or --cell NAME")
+            place = {"pos": list(o.pos), "heading": o.heading or 0.0}
+            place["cell" if o.cell else "world"] = o.cell or o.world
+            scn["places"]["spin-spot"] = place
+            scene = {"id": "spin-spot", "type": "static", "at": "spin-spot"}
+            self.spot = f"{place.get('cell') or place.get('world')} {','.join(f'{c:g}' for c in o.pos)}"
+        else:
+            sel = [s for s in scenario.select_scenes(scn, o.scenes, None) if s.get("perf", True)]
+            if len(sel) != 1:
+                raise spin.SpinError(f"--scene must name exactly one scene of '{o.scenario}' (got {len(sel)}: "
+                                     f"{', '.join(s['id'] for s in sel[:6])})")
+            scene = dict(sel[0])
+            if scene.get("type") != "static" or scene.get("at") not in scn["places"]:
+                raise spin.SpinError(f"scene {scene['id']} is a {scene.get('type')} scene: spin needs a static one")
+            self.spot = f"{o.scenario}/{scene['id']}"
+            if o.heading is not None:
+                scn["places"][scene["at"]] = dict(scn["places"][scene["at"]], heading=o.heading)
+        for k in ("hour", "weather"):
+            if getattr(o, k) is not None:
+                scene[k] = getattr(o, k)
+        self.check_variants(scn)
+        self.order = spin.balanced_order([v.name for v in o.variants], o.rounds)
+        return [scene]
+
+    def check_variants(self, scn):
+        o = self.o
+        dllvariant.check(o.dll, o.dll_ini)
+        if o.dll and o.fix == "off":
+            raise RuntimeError("--dll with --fix off: the DLL would not be loaded")
+        if o.fix == "off" and any(v.kind == "ini" for v in o.variants):
+            raise spin.SpinError("ini variants need the fix DLL loaded")
+        if any(v.kind == "ini" for v in o.variants):
+            src = Path(o.dll_ini) if o.dll_ini else self.paths.fix_ini
+            if not src.exists():
+                raise spin.SpinError(f"OblivionPerfFix.ini not found: {src}")
+            modes = spin.ini_modes(SHIPPED_INI.read_text(encoding="utf-8-sig", errors="replace"))
+            installed = fixini.fix_values(src.read_text(encoding="utf-8-sig", errors="replace"))
+            installed.update(fixini.parse_overrides(o.fix_ini))
+            if o.diag:
+                installed.update(fixini.DIAG_KEYS)
+            problems = spin.check_ini_variants(o.variants, modes, installed)
+            if problems:
+                raise spin.SpinError("cannot flip these in a live session:\n  " + "\n  ".join(problems))
+        pinned = set(scenario.profile_expect(self.prof))
+        bad = sorted(pinned & set(spin.cvar_keys(o.variants)))
+        if bad:
+            raise spin.SpinError(f"cvar(s) pinned by profile '{self.profile_name}' (the mod would put them back): "
+                                 f"{', '.join(bad)}; use another profile")
+
+    def measured_windows(self):
+        return [(s["t0"], s["t1"]) for s in self.slots]
+
+    def estimate_seconds(self, scn, scenes):
+        o = self.o
+        lap = spin.lap_seconds(o.deg_per_sec)
+        shots = len(o.shot_headings) * (o.shot_settle + 1.4) if o.shots else 0
+        turns = len(o.turn_headings) * (o.turn_hold + o.turn_secs + 0.5) if o.turn_settle else 0
+        return len(self.order) * (o.settle + lap * (o.laps + 1) + 2 + shots + turns) + 30
+
+    def announce(self, scenes, estimate, fix_mode, limit_min):
+        o = self.o
+        self.say(f"spin at {self.spot}: {o.deg_per_sec:g} deg/s ({spin.lap_seconds(o.deg_per_sec):.1f} s/lap), "
+                 f"{len(self.order)} slots of {o.laps} lap(s): {' '.join(self.order)}; about {estimate / 60:.0f} min, "
+                 f"profile {self.profile_name}, time limit {limit_min} min")
+
+    # ------------------------------------------------------------ the session
+
+    def tick_until(self, t_end):
+        """Waits until wall time t_end, sending the spin's heading every look_interval and noting it."""
+        o = self.o
+        while True:
+            now = time.time()
+            if now >= t_end:
+                return
+            h = spin.spin_heading(self.h0, o.deg_per_sec, self.t_spin0, now)
+            self.send(f"look {h % 360:.2f} {o.pitch:g}", timeout=5)
+            self.timeline.add(now, h)
+            left = min(o.look_interval, t_end - time.time())
+            if left > 0:
+                self.bridge.check()
+                time.sleep(left)
+
+    def drive(self, scenes):
+        self.apply_settings()
+        self.sync_marker()
+        self.warm_up(scenes)
+        scene = scenes[0]
+        self.repair_settings(scene["id"])
+        with self.static_setup(scene):
+            self.spin_session(scene)
+        self.end_of_pass()
+        self.sync_marker()
+
+    def spin_session(self, scene):
+        o, p = self.o, self.paths
+        place = self.scn["places"][scene["at"]]
+        self.h0 = float(place.get("heading", 0))
+        ini_t = cvar_t = None
+        by_name = {v.name: v for v in o.variants}
+        if any(v.kind == "ini" for v in o.variants):
+            cur = fixini.fix_values(p.fix_ini.read_text(encoding="utf-8-sig", errors="replace"))
+            ini_t = spin.ini_targets(o.variants, cur)
+            self.ini_now = dict(ini_t["base"])
+        base_cvars = {}
+        for k in spin.cvar_keys(o.variants):
+            v = self.bridge.get(k)
+            if v is None or v == "nil":
+                raise RuntimeError(f"cvar {k} does not exist in this game (get answered {v!r})")
+            base_cvars[k] = v
+        if base_cvars:
+            cvar_t = spin.cvar_targets(o.variants, base_cvars)
+            self.cvar_now = dict(base_cvars)
+            self.result["cvarsBase"] = base_cvars
+        self.t_spin0 = time.time()
+        self.say(f"spinning at {o.deg_per_sec:g} deg/s from heading {self.h0:g}; first {o.settle:g} s settle")
+        try:
+            current = None
+            lap = spin.lap_seconds(o.deg_per_sec)
+            for i, name in enumerate(self.order, 1):
+                v = by_name[name]
+                applied = {}
+                if name != current:
+                    applied = self.apply_variant(v, ini_t, cvar_t)
+                    current = name
+                self.tick_until(time.time() + o.settle)
+                t0 = spin.next_lap_start(time.time(), self.t_spin0, o.deg_per_sec)
+                self.tick_until(t0)
+                t1 = t0 + o.laps * lap
+                self.say(f"slot {i}/{len(self.order)}: {name} ({o.laps} lap(s), {t1 - t0:.0f} s)")
+                self.tick_until(t1)
+                self.slots.append({"variant": name, "t0": t0, "t1": t1, "applied": applied})
+                if o.shots:
+                    self.slots[-1]["shots"] = self.shot_lap(name, len(self.slots))
+                if o.turn_settle:
+                    self.slots[-1]["slot"] = len(self.slots)
+                    self.slots[-1]["turns"] = self.turn_lap(name, len(self.slots))
+                self.check_pins(scene["id"])
+        finally:
+            self.put_back(ini_t, cvar_t)
+
+    def hold_heading(self, h, secs):
+        """Keeps the camera at heading h for `secs` s (look re-sent every look_interval; not noted in the timeline:
+        it is outside every measured window)."""
+        end = time.time() + secs
+        while True:
+            self.send(f"look {h % 360:.2f} {self.o.pitch:g}", timeout=5)
+            left = min(self.o.look_interval, end - time.time())
+            if left <= 0:
+                return
+            self.bridge.check()
+            time.sleep(left)
+
+    def grab_shot(self):
+        if self.shot_cap is None:
+            self.shot_cap = (self.o.capturer_factory() if self.o.capturer_factory
+                             else detail.Capturer(target_w=self.o.shot_width))
+        return self.shot_cap.grab()
+
+    def read_cam(self):
+        """(heading, pitch) of the mod's smoothed camera (`cam` verb), or None when it cannot be read."""
+        ans = self.send("cam", timeout=5, nothrow=True) or ""
+        m = CAM_RE.search(ans)
+        return (float(m.group(1)), float(m.group(2))) if m else None
+
+    def place_camera(self, h):
+        """Puts the camera exactly at heading h / the spin pitch: the control rotation is set (`look`), the mod's
+        camera is snapped onto it (`cam snap`: no smoothing lag, no residual drift) and the read-back checked; the
+        snap is repeated up to three times. -> (read-back (heading, pitch) or None, snaps sent)."""
+        o = self.o
+        got = None
+        for n in range(1, 4):
+            self.hold_heading(h, 0.2)
+            self.send("cam snap", timeout=5, nothrow=True)
+            self.hold_heading(h, 0.3)                       # the snap happens on the mod's next camera frame
+            got = self.read_cam()
+            if got is None:
+                return None, n
+            dh = abs((got[0] - h + 180.0) % 360.0 - 180.0)
+            if dh <= CAM_TOL and abs(got[1] - o.pitch) <= CAM_TOL:
+                return got, n
+        self.warn(f"shot heading {h:g}: camera reads {got[0]:.1f}/{got[1]:.1f} after 3 snaps")
+        return got, 3
+
+    def grab_still(self, h, tries=4):
+        """Grabs until two consecutive captures are nearly identical (mean |difference| <= --shot-still), holding
+        the heading meanwhile. -> (frame, mean difference, grabs)."""
+        prev = None
+        best = None
+        for n in range(1, tries + 2):
+            frame = self.grab_shot()
+            if prev is not None:
+                d = imgcmp.mean_abs_diff(prev, frame)
+                if best is None or d < best[1]:
+                    best = (frame, d, n)
+                if d <= self.o.shot_still:
+                    return frame, d, n
+            prev = frame
+            self.hold_heading(h, STILL_GAP)
+        return best if best else (prev, None, 1)
+
+    def shot_lap(self, name, slot):
+        """After a measured slot: for each heading place the camera exactly (look + cam snap, read back), hold it for
+        --shot-settle s (temporal anti-aliasing converges), grab until the picture is still (two consecutive grabs
+        nearly identical) and save shots/<variant>/s<slot>/<heading>.png. The camera rotation read back from the mod
+        and the stillness go into the shot log. {heading name: rel path}."""
+        o = self.o
+        got = {}
+        for h in o.shot_headings:
+            hn = spinshots.heading_name(h)
+            try:
+                cam, snaps = self.place_camera(h)
+                self.hold_heading(h, o.shot_settle)
+                frame, still, grabs = self.grab_still(h)
+                t = time.time()
+                if detail.mean_luma(frame) < detail.MIN_MEAN:
+                    self.warn(f"shot {name} s{slot} {hn}: black picture")
+                    continue
+                if still is None or still > o.shot_still:
+                    self.warn(f"shot {name} s{slot} {hn}: picture not still (difference {still if still is None else round(still, 2)})")
+                rel = spinshots.shot_rel(name, slot, h)
+                path = self.run_dir / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                imgcmp.write_png(path, frame.w, frame.h, frame.pix)
+                got[hn] = rel
+                self.shot_log.append({"slot": slot, "variant": name, "heading": h, "t": round(t, 3),
+                                      "camHeading": None if cam is None else cam[0],
+                                      "camPitch": None if cam is None else cam[1], "snaps": snaps,
+                                      "still": None if still is None else round(still, 3), "grabs": grabs})
+            except (detail.CaptureError, OSError, ValueError, subprocess.SubprocessError) as e:
+                self.warn(f"shot {name} s{slot} {hn}: {e}")
+        self.say(f"shots {name} s{slot}: {len(got)}/{len(o.shot_headings)}")
+        return got
+
+    def grab_turn(self):
+        if self.turn_cap is None:
+            f = self.o.turn_capturer_factory or self.o.capturer_factory
+            self.turn_cap = f() if f else detail.Capturer(target_w=self.o.turn_width)
+        return self.turn_cap.grab()
+
+    def turn_lap(self, name, slot):
+        """After a measured slot (outside the fps windows): for each --turn-headings H, look away for --turn-hold s,
+        then one `look H` plus `cam snap` (the cinematic camera jumps instead of gliding) and grab the window every
+        --turn-interval s for --turn-secs s. Each series is analysed (turnsettle.analyse_turn) and its contact strip
+        saved. -> [turn dicts]"""
+        o = self.o
+        masks = spinshots.all_masks(self.scn.get("masks"))
+        th = {**o.turn_thresholds, "diffThresh": o.diff_thresh}
+        out = []
+        for h in o.turn_headings:
+            try:
+                self.hold_heading(turnsettle.from_heading(h, o.turn_from), o.turn_hold)
+                self.send(f"look {h % 360:.2f} {o.pitch:g}", timeout=5)
+                t0 = time.time()
+                self.send("cam snap", timeout=5, nothrow=True)
+                frames = self.capture_turn(t0)
+                res = turnsettle.analyse_turn(frames, masks, th)
+                res["heading"] = h
+                if "error" not in res:
+                    res["strip"] = turnsettle.turn_rel(name, slot, h)
+                    res["stripTimes"] = turnsettle.write_strip(self.run_dir / res["strip"], frames)
+                else:
+                    self.warn(f"turn {name} s{slot} {h:g}: {res['error']}")
+                self.turn_log.append({"slot": slot, "variant": name, "heading": h, "t": round(t0, 3)})
+                out.append(res)
+            except (detail.CaptureError, OSError, ValueError, imgcmp.ImageError, subprocess.SubprocessError) as e:
+                self.warn(f"turn {name} s{slot} {h:g}: {e}")
+        ok = [t for t in out if "error" not in t]
+        self.say(f"turn {name} s{slot}: " + (", ".join(f"{t['heading']:g}: settle {t['settleS']:.2f}s pops {t['pops']}"
+                                                    for t in ok) or "no turn measured"))
+        return out
+
+    def capture_turn(self, t0):
+        """Frames [(t after the snap, picture)] on a fixed cadence of --turn-interval s (ticks missed because a grab
+        took longer are skipped, not caught up). t = middle of the grab."""
+        o = self.o
+        frames, k = [], 0
+        while True:
+            due = t0 + k * o.turn_interval
+            now = time.time()
+            if due - t0 > o.turn_secs:
+                break
+            if due > now:
+                time.sleep(due - now)
+            self.bridge.check()
+            ts = time.time()
+            try:
+                f = self.grab_turn()
+            except detail.CaptureError as e:
+                self.warn(f"turn grab: {e}")
+                k += 1
+                continue
+            te = time.time()
+            frames.append(((ts + te) / 2 - t0, f))
+            self.turn_grab_ms.append((te - ts) * 1000)
+            k = max(k + 1, int((te - t0) / o.turn_interval) + 1)
+        self.turn_dts += [b[0] - a[0] for a, b in zip(frames, frames[1:])]
+        return frames
+
+    def apply_variant(self, v, ini_t, cvar_t):
+        applied = {}
+        if ini_t is not None and ini_t[v.name] != self.ini_now:
+            fixini.override_ini(self.paths.fix_ini, self.guard, ini_t[v.name])
+            self.ini_now = dict(ini_t[v.name])
+            applied["ini"] = {k: val for k, val in ini_t[v.name].items() if k in v.values} or dict(ini_t[v.name])
+            self.say(f"variant {v.name}: ini {applied['ini']}")
+            self.tick_until(time.time() + INI_WAIT)
+        if cvar_t is not None:
+            back = {}
+            for k, val in cvar_t[v.name].items():
+                if spin.same_value(self.cvar_now.get(k), val):
+                    continue
+                ans = self.send(f"cvar {k} {val}", timeout=8, nothrow=True) or ""
+                got = ans.partition("=")[2]
+                back[k] = got
+                if not spin.same_value(got, val):
+                    self.warn(f"variant {v.name}: {k} set to {val} but reads back {got or ans!r}")
+                self.cvar_now[k] = val
+            if back:
+                applied["cvar"] = back
+                self.say(f"variant {v.name}: cvar read back {back}")
+                self.tick_until(time.time() + 0.5)
+        return applied
+
+    def put_back(self, ini_t, cvar_t):
+        """As installed again, live (the file itself is also restored by the FileGuard at the end)."""
+        try:
+            if ini_t is not None and ini_t["base"] != self.ini_now:
+                fixini.override_ini(self.paths.fix_ini, self.guard, ini_t["base"])
+                self.ini_now = dict(ini_t["base"])
+            if cvar_t is not None:
+                for k, val in cvar_t["base"].items():
+                    if not spin.same_value(self.cvar_now.get(k), val):
+                        self.send(f"cvar {k} {val}", timeout=5, nothrow=True)
+                        self.cvar_now[k] = val
+        except Exception as e:
+            self.warn(f"put back (live): {e}")
+
+    # ------------------------------------------------------------ results
+
+    def analyse(self, mh_dir, watcher):
+        super().analyse(mh_dir, watcher)
+        log = getattr(self, "log", None)
+        rows = []
+        for s in self.slots:
+            if log is not None:
+                st = spin.slot_stats(log, self.log_start, s["t0"], s["t1"], self.timeline, self.o.cam_lag, self.o.laps)
+                if not st.get("frames"):
+                    self.warn(f"slot {s['variant']}: no frames in the measured time")
+            else:
+                st = {}
+            rows.append({**s, "t0": round(s["t0"], 3), "t1": round(s["t1"], 3), "seconds": round(s["t1"] - s["t0"], 2), **st})
+        self.result["slots"] = rows
+        self.result["variants"] = spin.summarise(rows, self.o.variants)
+
+    def outcome_of(self, outcome):
+        got = {s["variant"] for s in self.result.get("slots", []) if s.get("frames")}
+        if not got:
+            return "failed"
+        return "ok" if outcome == "ok" and got == {v.name for v in self.o.variants} else "partial"
+
+    def write_outputs(self, run_dir):
+        o = self.o
+        self.result["spin"] = {
+            "spot": self.spot, "degPerSec": o.deg_per_sec, "lapSec": spin.lap_seconds(o.deg_per_sec), "pitch": o.pitch,
+            "laps": o.laps, "settle": o.settle, "rounds": o.rounds, "camLag": o.cam_lag, "startHeading": self.h0,
+            "order": self.order, "lookInterval": o.look_interval, "variantSpecs": [v.spec() for v in o.variants],
+            "thresholds": o.thresholds}
+        if o.shots:
+            self.result["spin"]["shots"] = {"headings": o.shot_headings, "settle": o.shot_settle, "log": self.shot_log,
+                                            "pairs": o.shot_pairs, "diffThresh": o.diff_thresh,
+                                            "still": o.shot_still, "register": o.shot_register,
+                                            "search": o.shot_search}
+            try:
+                images = spinshots.analyse(run_dir, self.slots, o.variants, spinshots.all_masks(self.scn.get("masks")),
+                                           o.shot_headings, o.shot_pairs, o.diff_thresh, o.shot_step, o.diff_gain,
+                                           say=self.warn, register=o.shot_register, search=o.shot_search)
+                self.result["images"] = images
+                spin.apply_images(self.result.get("variants") or [], images, o.thresholds)
+            except Exception as e:
+                self.warn(f"image comparison failed: {e}")
+        if o.turn_settle:
+            self.write_turn_outputs(run_dir)
+        (run_dir / "heading-timeline.json").write_text(json.dumps(self.timeline.to_json()))
+        try:
+            self.split_ledger(run_dir)
+        except Exception as e:
+            self.warn(f"ledger split by variant failed: {e}")
+        self.result["warnings"] = self.warnings
+        spin.write_result(run_dir, self.result)
+
+    def write_turn_outputs(self, run_dir):
+        o = self.o
+        cfg = {"headings": o.turn_headings, "turns": len(o.turn_headings), "hold": o.turn_hold, "from": o.turn_from,
+               "interval": o.turn_interval, "secs": o.turn_secs, "width": o.turn_width, "log": self.turn_log,
+               "achievedInterval": round(statistics.median(self.turn_dts), 4) if self.turn_dts else None,
+               "grabMs": round(statistics.median(self.turn_grab_ms), 1) if self.turn_grab_ms else None,
+               "thresholds": {**turnsettle.DEFAULTS, **o.turn_thresholds, "diffThresh": o.diff_thresh}}
+        self.result["spin"]["turnSettle"] = cfg
+        try:
+            if cfg["achievedInterval"] and cfg["achievedInterval"] > 1.5 * o.turn_interval:
+                self.warn(f"turn capture ran every {cfg['achievedInterval']:.2f} s ({cfg['grabMs']:.0f} ms per grab), "
+                          f"slower than --turn-interval {o.turn_interval:g}: settle times are only good to that")
+            self.result["turnSettle"] = turnsettle.summarise(self.slots, o.variants, max(o.turn_interval, cfg["achievedInterval"] or 0))
+            turnsettle.write_gallery(run_dir, self.slots)
+        except Exception as e:
+            self.warn(f"turn settle summary failed: {e}")
+
+    def split_ledger(self, run_dir):
+        src = run_dir / "diag" / "OblivionPerfFix-ledger.csv"
+        if not self.o.diag or not src.exists():
+            return
+        text = src.read_text(errors="replace")
+        frames = spin.ledger_frames(text)
+        offset = spin.anchor_ledger(frames, self.sync_markers)
+        led = {"variants": {}}
+        self.result["ledger"] = led
+        if offset is None:
+            led["note"] = ("The ledger's clock could not be matched to the sync stalls (needs both markers and a "
+                           "unique pair of ~350 ms frames), so it is not split by variant: see diag/stutter_ledger.txt.")
+            return
+        windows = {}
+        for s in self.slots:
+            windows.setdefault(s["variant"], []).append((s["t0"], s["t1"]))
+        texts, summary = spin.split_ledger(text, windows, offset, exclude=diagwin.exclusions(self.sync_markers))
+        led["offsetS"] = round(offset, 3)
+        led["note"] = (f"ledger clock anchored on the two sync stalls (wall = end_ms/1000 + {offset:.3f}); per-variant "
+                       f"files hold only the slots' frames, without +-{diagwin.MARGIN_S:g} s around a sync stall")
+        tool = REPO / "tools" / "stutter_ledger.py"
+        for name, t in texts.items():
+            f = run_dir / "diag" / f"ledger-{name}.csv"
+            f.write_text(t)
+            summary[name]["file"] = f"diag/ledger-{name}.txt"
+            if tool.exists():
+                r = subprocess.run([sys.executable, "-I", str(tool), str(f), "--ignore-focus"], capture_output=True,
+                                   text=True, timeout=300)
+                (run_dir / "diag" / f"ledger-{name}.txt").write_text(r.stdout + (("\n" + r.stderr) if r.returncode else ""))
+        led["variants"] = summary

@@ -7,3 +7,7 @@ third_party/
 lab/
 # Benchmark runtime files (command/log files shared with the in-game mod, status, locks, save guard)
 run/
+# Linux benchmark results
+linux/results/
+build-linux/
+build-linux/

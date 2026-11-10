@@ -216,8 +216,11 @@ struct Config {
                                          // an Engine.ini value wins; 0 = the game's value; both routes; start-up only
     int osPageCache = 1;                 // OsPageCache: blocks the allocator releases to Windows are kept (exact size, bounded) and
                                          // handed out again for its own cache misses (identical; start-up install, then live)
-    int osPageCacheMB = 64;              // not in the shipped ini: OsPageCache's cap (MB, 4-1024)
-    int osPageCacheTrimSeconds = 5;      // not in the shipped ini: OsPageCache releases blocks unused this long (s)
+    int osPageCacheMB = 64;              // OsPageCacheMB: OsPageCache's cap (MB, 4-1024)
+    int osPageCacheTrimSeconds = 5;      // not in the shipped ini: OsPageCache releases blocks unused this long (s); OsPageCacheKeepMs wins
+    int osPageCacheTrace = 0;            // OsPageCacheTrace: record every alloc / free the cache sees into OblivionPerfFix-oscache-trace.bin (tools/oscache_sim.py)
+    int osPageCacheTraceMB = 64;         // OsPageCacheTraceMB: that file's size, a ring (4-1024 MB)
+    int osPageCacheKeepMs = 0;           // OsPageCacheKeepMs: OsPageCache releases blocks unused this long (ms, 100-600000); 0 = OsPageCacheTrimSeconds
     int animTeardownParallel = 1;        // AnimTeardownParallel: dying NPC animation data's interpolators
                                          // destroyed on helper threads, joined before the actor's clean-up goes on (start-up
                                          // install when not 0, then live): 0 off, 1 on
@@ -231,6 +234,8 @@ struct Config {
     int psoPrecompileColdQueue = 1000;   // PsoPrecompileColdQueue: once this many pipelines wait (a cold driver cache), the game's own
                                          // pace for the rest of the precompile (0 = no cold-cache guard at all: no queue,
                                          // driver-thread or 60 s limit; live)
+    bool psoColdGuardWine = true;        // PsoColdGuardWine: under Wine (no driver threads visible) the cold-cache guard also watches
+                                         // whether UE's pipeline queue is draining (live; no effect on Windows)
     bool psoPrecompileFastInGameMenus = false;  // PsoPrecompileFastInGameMenus: also Fast in menus once play has started
                                          // (inventory, map, dialogue, pause); 0 = the game's pace there (live)
     int physicsPushParallel = 1;       // PhysicsPushParallel: the physics side of the push of new static bodies: 0 off, 1 batch creation +
@@ -252,6 +257,10 @@ struct Config {
     bool doorDiagEarlyStream = false;  // ... experiment: stream-all once when the loading screen idles (live)
     bool fadeVtFlushSkip = false;      // FadeVtFlushSkip (off by default): the r.VT.Flush the game runs 1.5 s into a
                                        // transition's fade-in skipped (installed only if on at start-up, then live)
+    bool streamPrewarm = false;        // StreamPrewarmBehindLoading (off by default): faster texture streaming budgets while a
+                                       // transition's loading screen idles, put back before the fade-in (live)
+    int streamPrewarmMaxHoldMs = 0;    // StreamPrewarmMaxHoldMs: extra loading screen time (ms, max 3000) while they stream; 0 = none
+                                       // (the hold needs a restart to switch on from 0)
     bool streamBehindLoading = true;   // StreamBehindLoadingScreen: a new area's textures stream while its loading screen is still
                                        // up, so the fade-in is not held for them (installed only if on at start-up, then live)
     int unfreezeBehindLoading = 0;     // prototype UnfreezeBehindLoadingScreen (trade-off, off by default): after an
@@ -272,11 +281,24 @@ struct Config {
     bool hdrSaveThumbnail = false;     // HdrSaveThumbnail (TRADE-OFF, off by default): a save's thumbnail made in
                                        // HDR10 converted the same way (start-up install, live)
     int hdrGamma22White = 95;         // not in the shipped ini: HdrGamma22's reference white = this / 10 x the Mid-Tone (live)
+    bool otProfile = false;            // Diagnostic OtProfile: the old engine's thread (OT) per-cycle busy/idle and stage times to
+                                       // OblivionPerfFix-otprofile.csv (installed only if on at start-up, then live)
+    int otProfileMs = 10;              // ... a cycle counts as slow from this busy time (ms)
+    int otProfileSampleHz = 1000;      // ... the stage-marker sampler's rate (0 = no sampler)
+    bool otCrashContext = false;       // Diagnostic OtCrashContext: a fault on the OT is described in the log (start-up install, live)
     bool hitchLedgerTickSplit = false; // HitchLedgerTickSplit (diagnostic, public since 1.2.3): diagnostics/tick_split.cpp, the
                                        // game thread's tick time by kind, class and group to OblivionPerfFix-ticksplit.csv
                                        // (needs HitchLedger=1; installed only if on at start-up, then live)
     bool vramCounterFix = true;        // VramCounterFix: the Graphics page's "Show VRAM" counter shows the game's video
                                        // memory use and budget instead of 0/0 (game bug; start-up install, live)
+    int shaderGateBeforePlay = 1;        // ShaderGateBeforePlay: 0 off, 1 on under Wine/Proton only, 2 everywhere (live)
+    int psoRecordReplay = 0;             // PsoRecordReplay: 0 off, 1 record the pipelines created in play and replay them behind the loading screen, 2 measure only
+    int psoRecordMaxMB = 512;            // PsoRecordMaxMB: the record file's size limit
+    int psoRecordMinMs = 0;              // not in the shipped ini: only pipelines whose creation took this long are recorded (0 = all)
+    int psoReplayThreads = 3;            // not in the shipped ini: replay worker threads (1-8)
+    int shaderGateMaxSeconds = 600;      // ShaderGateMaxSeconds: the longest the first load is held
+    bool shaderScreenLinux = true;       // ShaderScreenLinuxFingerprint: under Wine the shader screen also follows Mesa, vkd3d-proton, Wine
+                                         // and the shader caches (not only DXGI's constant driver version)
     bool shaderScreenAfterDriverChange = true;   // ShaderScreenAfterDriverChange (game bug): the game's first-launch
                                                  // shader screen at start-up after a driver/card change (start-up only)
     bool npcCreationPacing = true;    // NpcCreationPacing: far-away NPC creation spread over frames 
@@ -305,6 +327,8 @@ struct Config {
                                        // integrated GPUs, APUs, handhelds) the memory-keeping fixes act as the game; 2 = when the
                                        // game's GPU is one, on Windows itself (not Wine/Proton/CrossOver) with under 20 GB of RAM
                                        // installed; 1 = always (test on any PC), 0 = never; live
+    bool sharedMemoryGpuWine = true;   // SharedMemoryGpuWine: under Wine/Proton the GPU is asked too, so a UMA GPU (Steam Deck, APUs)
+                                       // counts for SharedMemoryGpu=2; a discrete GPU changes nothing; live
     bool navmeshBuildNoBusyWait = true; // NavmeshBuildNoBusyWait: navmesh tile builds never run inside another task's busy wait
     bool busyWaitFlagCheck = true;      // BusyWaitFlagCheck: a busy-waiting worker checks every task it picks up (UE 5.3 checks only the
                                         // first): tasks that must not run inside busy waits (NavmeshBuildNoBusyWait's tiles) never do; live
@@ -318,6 +342,11 @@ struct Config {
     int statsIntervalSeconds = 60;     // 0 = no periodic stats in the log
 };
 Config LoadConfig(const wchar_t* iniPath);
+// The monitor thread's per-second read: parses the ini into *cfg only when its size or last-write time changed (or the
+// file changed within the last 2 s, or *cfg was never read); returns true when it parsed.
+bool LoadConfigIfChanged(const wchar_t* iniPath, Config* cfg, const unsigned long long* nowFileTime = nullptr);  // nowFileTime: tests inject the clock
+// Running under Wine (Proton, CrossOver): ntdll exports wine_get_version. Asked once, cached.
+bool IsWine();
 
 // ---- streaming/nav_link_fast.cpp (NavLinkFast) ----
 bool InstallNavLinkFast(bool beforeGameCode, int mode);  // findConnectingPolys' and connectExtLinks' calls redirected (start-up only)
@@ -872,10 +901,13 @@ void VramCounterFixTestSetup(void* original, bool (*latest)(uint64_t*, uint64_t*
 bool LatestGameVram(uint64_t* used, uint64_t* budget);  // memory_monitor.cpp: last DXGI sample (bytes); false = none yet
 // shader_screen.cpp (ShaderScreenAfterDriverChange, game bug): the start-up's Save_Settings check (which decides the
 // game's first-launch shader screen) answers "no save" once after the graphics card or driver changed
+void SetShaderScreenLinux(bool on);  // ShaderScreenLinuxFingerprint (before Apply...): Wine only
 bool ApplyShaderScreenAfterDriverChange(bool beforeGameCode, const wchar_t* dir);  // start-up only; dir: the DLL's folder
 bool ShaderScreenInfo(uint8_t** call, uint8_t** original, uint8_t** stub, void** hook);
 void ShaderScreenTestSetup(void* original, bool (*gpu)(char*, size_t), const wchar_t* recordPath);  // self-test
 void ShaderScreenPrecompileFinished();  // pso_precompile.cpp: the start-up precompile ended (records a pending card/driver)
+void ShaderScreenTestLinux(bool (*probe)(char*, size_t, uint64_t*, uint64_t*));  // self-test: fake Linux-side tokens and cache sizes
+bool ShaderScreenRealLinuxProbe(char* tokens, size_t size, uint64_t* vkd3dBytes, uint64_t* mesaBytes);  // self-test: the real probe (false off Wine)
 int ShaderScreenShownUnrecorded();      // self-test: the "shown N" count this start-up wrote (-1: the record not writable)
 // menu_hdr_background.cpp (HdrMenuBackground, TRADE-OFF, off by default): in HDR10 the menu's background
 // screenshot holds sRGB-encoded PQ values the UI shows as colour; remapped to sRGB at the same nits
@@ -907,8 +939,33 @@ void ConvertR10G10B10A2ToColor(uint32_t width, uint32_t height, const uint8_t* i
 
 // screenshot_parallel.cpp (ScreenshotParallel: the menu screenshot's copies into fresh 33 MB arrays, one thread each)
 bool InstallOsPageCache(bool beforeGameCode, const wchar_t* traceDir, int trace);  // os_page_cache.cpp: the OS thunks' detours (start-up)
-void SetOsPageCache(int mode, int capMB, int trimSeconds, bool relief);  // OsPageCache, live (1-second tick): also trims unused blocks
+void SetOsPageCache(int mode, int capMB, int trimSeconds, bool relief, int keepMs = 0, int traceMB = 0);  // OsPageCache, live (1-second tick): also trims unused blocks; traceMB > 0 = OsPageCacheTrace on
 void LogOsPageCacheStats();
+// os_page_cache_trace.cpp (OsPageCacheTrace: a bounded binary ring file of the cache's allocs and frees; layout in that file)
+enum OsTraceKind : uint32_t {
+    kTraceAllocHit = 1,    // cache-miss caller served from the cache
+    kTraceAllocMiss = 2,   // cache-miss caller, cache on, nothing of that size: new block from Windows
+    kTraceAllocOff = 3,    // cache-miss caller, cache off: new block from Windows (eligible for the cache)
+    kTraceAllocOther = 4,  // any other caller (tables, OOM reserve, > 16 MB): always a new block
+    kTraceFreeKept = 5,    // release kept in the cache
+    kTraceFreePassed = 6,  // cache on, release not kept (too big / odd size / over cap): to Windows
+    kTraceFreeOff = 7,     // cache off: release to Windows
+    kTraceEvictCap = 8, kTraceEvictSize = 9, kTraceEvictRoom = 10,  // a kept block released: over the cap, one size over half, no node slot
+    kTraceEvictTrim = 11,  // a kept block released: unused for the keep time
+    kTraceEvictFlush = 12, // a kept block released: relief, switched off, failed allocation, lowered cap
+    kTraceMark = 13,       // settings change: size = cap bytes, id = keep ms
+};
+extern std::atomic<bool> g_osTraceOn;
+uint32_t OsTraceAddrId(const void* p);
+void OsTraceRecord(uint32_t kind, uint64_t size, uint32_t id);
+bool OsTraceStart(const wchar_t* dir, uint64_t maxBytes, int capMB, int keepMs);
+void OsTraceStop();
+uint64_t OsTraceFlush();
+struct OsTraceStatsOut {
+    bool on;
+    uint64_t written, dropped, capacity;
+};
+void OsTraceStats(OsTraceStatsOut* out);
 struct OsPageCacheStatsOut {
     uint64_t hits, misses, kept, passed, evictCap, evictSize, trimmed, flushed, allocFails, held;
     uint32_t blocks;
@@ -918,6 +975,7 @@ void OsPageCacheTestInit(void* (*osAlloc)(SIZE_T), BOOL (*osFree)(void*), uint64
 void* OsPageCacheTestAlloc(size_t size, bool cachePath);
 BOOL OsPageCacheTestFree(void* ptr, size_t size);
 void OsPageCacheTestStats(OsPageCacheStatsOut* out);
+void OsPageCacheTestInstallTrace(const wchar_t* dir, uint64_t maxBytes);  // the trace writer on a test directory
 struct OsPageCacheInfoOut {
     uint8_t* allocFn;
     uint8_t* freeFn;
@@ -959,6 +1017,36 @@ void PsoPrecompileTestTiming(uint32_t fastMaxMs, uint32_t driverRetryMs);  // se
 void SetPsoPrecompileFastBudget(float ms, int coldQueue);  // live: render-thread ms per frame at the faster pace; the queue that
                                                            // means a cold driver cache (0: no cold-cache guard at all)
 void PsoPrecompileTestStatics(uint32_t* batchSize, float* batchTime, int64_t* active);  // self-test: fakes for the statics
+// pso_replay.cpp (PsoRecordReplay)
+void PsoRecordTick(int mode, int maxMB, int minMs, int threads, const wchar_t* dir);  // monitor thread, once a second
+bool PsoRecordInstallEarly(int mode);  // start-up: d3d12.dll's D3D12CreateDevice export redirected when mapped, so the game's own device is hooked
+bool PsoReplayBusy();    // the replay is creating pipelines (ShaderGateBeforePlay waits for it)
+bool PsoPlayStarted();   // pso_precompile.cpp: play has been seen (needs PsoPrecompileFast installed)
+struct PsoRecordCounts {
+    uint64_t calls, newPsos, recorded, skipped, rsKnown, loaded, replayed, replayFailed, fileBytes, replayedSeen;
+    bool full;
+};
+void PsoRecordTestSetPlay(int v);   // self-tests: -1 ask PsoPlayStarted, 0/1 forced
+bool PsoRecordTestAttach(void* device, const wchar_t* path, int mode, int maxMB, int minMs, int threads);
+void PsoRecordTestFlush();
+bool PsoRecordTestWait(uint32_t ms);
+void PsoRecordTestReset();
+PsoRecordCounts PsoRecordTestCounts();
+long PsoRecordTestCreateDevice(void* fakeReal, void** out);
+void* PsoRecordTestGameDevice();
+void* PsoRecordTestCandidate();
+void* PsoRecordTestPatchExport(HMODULE m, const char* name, void* target, void** restoreSlot, uint32_t* restoreRva);
+void PsoRecordTestRestoreExport(void* slot, uint32_t rva);
+void SetShaderGate(bool on, uint32_t maxSeconds);  // live: ShaderGateBeforePlay effective (needs the gate slot hook), the cap in seconds
+bool ShaderGateOn();
+bool ShaderGateHooked();                      // stream_behind_loading.cpp: the fade gate's tick goes through ShaderGateHoldsTick
+inline bool ShaderGateWanted(const Config& c) { return c.shaderGateBeforePlay == 2 || (c.shaderGateBeforePlay == 1 && IsWine()); }
+bool ShaderGateHoldsTick();                    // stream_behind_loading.cpp's fade-gate tick (game thread): true = skip it, the loading screen stays
+void PsoPrecompileTestGate(uint32_t stallMs, uint32_t capMs = 0);  // self-test: the gate forgotten, the "queue empty" release and the cap shortened (ms)
+bool PsoPrecompileGateHolding();               // self-test
+const char* PsoPrecompileGateEnd();            // self-test: why the last hold ended
+void SetPsoColdGuardWine(bool on);             // live: PsoColdGuardWine (queue-trend guard; only acts under Wine)
+void PsoPrecompileTestQueueTrend(int64_t queued);  // self-test: one second's reading of UE's queue depth (the Wine guard)
 void PsoPrecompileWatchDriver();               // monitor thread, once a second: the driver's compile threads (cold-cache guard)
 void PsoPrecompileTestDriverBusy(double cores);  // self-test: one second's reading of the driver's compile threads
 int PsoPrecompileTestOwnThreads(uint32_t* mainThread);  // self-test: this process's threads (NtQuerySystemInformation) and the first one
@@ -1115,6 +1203,31 @@ uint64_t RigTraceTestReused();                                    // self-test o
 void RigTraceTestSetMode(int mode);                               // self-test only: 0 off, 1 reuse, 2 verify
 uint64_t RigTraceTestVerified(uint64_t* diff);                    // self-test only: verified repeats (and how many differed)
 uint64_t NpcPacingFrame();  // npc_pacing.cpp: its frame counter (counts while NpcCreationPacing's frame hook runs)
+// ot_profile.cpp (diagnostic OtProfile / OtCrashContext): read-only profiler and crash breadcrumb of the old engine's thread.
+struct OtProfileInfoOut {
+    bool installed, ctxInstalled, gtTimed;
+    int stages;
+    uint8_t* bodyCall;
+    uint8_t* endRun;   // the rewritten RunSession(-2) call (12 bytes)
+    uint8_t* gtRun;    // the rewritten RunSession(-1) call (11 bytes), nullptr if not timed
+    uint8_t* call[16];    // per stage: the redirected call (nullptr = not timed)
+    uint8_t* target[16];  // ... and the function it called
+    void* hook[16];
+    uint32_t* marker;
+    uint8_t* region;
+    void* runHookOt;
+    void* runHookGt;
+    void* ctxHandler;
+    uint32_t ctxLogged;
+    size_t recordSize;
+};
+bool InstallOtProfile(bool beforeGameCode, const wchar_t* dir, bool profile, bool crashContext, bool pacingHooked, bool gridSafe);
+void SetOtProfile(bool on, int thresholdMs, int sampleHz, bool crashContext);  // monitor thread, live
+void OtProfileDrain();                                                          // monitor thread, once a second
+bool OtProfileInfo(OtProfileInfoOut* out);
+void OtProfileTestSetup(uint64_t (*clock)(), int64_t freq, const wchar_t* path, void* const* fakeTargets, uint32_t sampleHz);  // self-test only
+void OtProfileTestMarker(uint32_t m);  // self-test only
+void OtProfileTestClose();             // self-test only
 // tick_split.cpp (diagnostic TickSplit, [Fixes] HitchLedgerTickSplit, public since 1.2.3, needs HitchLedger=1): the game
 // thread's tick time by tick-function kind, ticked class and tick group into OblivionPerfFix-ticksplit.csv.
 struct TickSplitFrame {        // from LedgerFrameEnd, every frame
@@ -1436,13 +1549,22 @@ struct StreamBehindLoadingInfo {
     uint8_t* setLoadingFreeze = nullptr;  // prototype UnfreezeBehindLoadingScreen
 };
 bool FindStreamBehindLoading(StreamBehindLoadingInfo* out);  // locate only; false = unavailable (logged)
-bool InstallStreamBehindLoading(bool beforeGameCode, bool tradeOffs);  // one entry detour (the gate-arming function); needs the fade hook
+bool InstallStreamBehindLoading(bool beforeGameCode, bool tradeOffs, bool shaderGate = false);  // one entry detour (the gate-arming function); needs the fade hook
                                                             // found; tradeOffs: also UnfreezeBehindLoadingScreen's redirections
 void SetStreamBehindLoading(bool on);                       // monitor thread, live
 void SetUnfreezeBehindLoading(int ms);                      // monitor thread, live (0 = off); prototype, trade-off
 void SetUnfreezeBehindLoadingFastTravel(int ms);            // ... its hold for fast travels (0 = UnfreezeBehindLoadingScreen's); live
 void StreamBehindLoadingFrameEnd();                         // game thread, once per frame (NpcCreationPacing's frame hook)
 void LogStreamBehindLoadingStats();
+// stream_prewarm.cpp (StreamPrewarmBehindLoading): streaming budgets raised while a transition's loading screen idles.
+bool FindStreamPrewarm();                                   // the console manager pointer (through FadeVtFlushSkip's search); false = unavailable
+void SetStreamPrewarm(bool on, int holdMs, bool vtUploadsKeyOn);  // monitor thread, live
+int StreamPrewarmHoldMs();                                  // the extra hold in ms (0 when off)
+bool StreamPrewarmActive();                                 // budgets raised right now
+void StreamPrewarmBegin(void* poolCvar);                    // game thread
+void StreamPrewarmEnd(uint32_t updates);                    // game thread
+void LogStreamPrewarmStats();
+void StreamPrewarmTestSetup(void** managerSlot);            // self-test only
 // an exec function (UFunction thunk) by its registered name, checked against a byte pattern (stream_behind_loading.cpp);
 // nullptr unless the name, its native-table pair and the match are each exactly one
 uint8_t* FindExecByName(const char* name, const char* shape);

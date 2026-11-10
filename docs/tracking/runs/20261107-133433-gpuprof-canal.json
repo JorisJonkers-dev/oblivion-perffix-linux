@@ -1,0 +1,38 @@
+{
+ "diagFiles": null,
+ "dll": {
+  "installed": true,
+  "path": "/run/media/ExtraToast/Shared/SteamLibrary/steamapps/common/Oblivion Remastered/OblivionRemastered/Binaries/Win64/version.dll",
+  "sha256": "4c76f28fc23331aadec7697bc8c8c64870eac05f663e1c540715c62078452bad"
+ },
+ "env": {
+  "MANGOHUD": "1",
+  "MANGOHUD_CONFIGFILE": "/home/ExtraToast/Projects/opf-run/linux/results/20261107-133433-gpuprof-canal/mangohud.conf",
+  "MESA_GPU_TRACEFILE": "/home/ExtraToast/.cache/oblivion-bench/gpuprof/trace.csv",
+  "MESA_GPU_TRACES": "print_csv",
+  "MESA_VK_TRACE": "ranges",
+  "MESA_VK_TRACE_PER_SUBMIT": "1",
+  "OBLV_BENCH_MARKER": "/home/ExtraToast/Projects/opf-run/run/launch-marker.txt",
+  "OBLV_GAME_ARGS": "-FixedSeed",
+  "VK_DRIVER_FILES": "/home/ExtraToast/.cache/oblivion-bench/gpuprof/mesa/share/vulkan/icd.d/radeon_icd.x86_64.json",
+  "VK_ICD_FILENAMES": "/home/ExtraToast/.cache/oblivion-bench/gpuprof/mesa/share/vulkan/icd.d/radeon_icd.x86_64.json",
+  "WINEDLLOVERRIDES": "version=n,b;dwmapi=n,b"
+ },
+ "fix": "on",
+ "fixIniOverrides": null,
+ "label": "gpuprof-canal",
+ "loadSec": null,
+ "outcome": "failed",
+ "profile": {
+  "description": "Your own settings as they are (resolution, window mode, upscaler, quality, frame cap): nothing is changed. Used by -Watch. Results depend on those settings, so say which ones you used when you share them",
+  "name": "own",
+  "own": true
+ },
+ "scenario": "linux-hotspots",
+ "scenes": [],
+ "start": "fresh",
+ "time": "2026-11-07 13:34:33",
+ "warnings": [
+  "run stopped: GameDown: exited: the game process is gone"
+ ]
+}

@@ -569,9 +569,11 @@ static uint64_t HashWords(uint64_t seed, const void* data, size_t bytes)
 #include "selftest_clothreg.h"    // ClothRegisterLite: sites, lite builds and their completion with fakes
 #include "selftest_clothdefer.h"     // ClothBuildDefer: sites, hooks and the defer rule (after ClothRegisterLite)
 #include "selftest_animpar.h"      // AnimTeardownParallel's shapes and the helper queue with fakes
+#include "selftest_otprofile.h"      // diagnostic OtProfile / OtCrashContext: sites, cycle bookkeeping with fakes, crash context, cost
 #include "selftest_cellbuf.h"      // CellBufferPacedEvict's shapes, the clamp stub and the buffer LRU with and without the fix
 #include "selftest_vramcounter.h"  // VramCounterFix: the Show VRAM counter
 #include "selftest_shaderscreen.h"  // ShaderScreenAfterDriverChange
+#include "selftest_psorecord.h"    // PsoRecordReplay: serialisation round trip, dedup, bounds, vtable hooks on a fake device
 #include "selftest_doordiag.h"     // diagnostic DoorDiag: sites (locate only)
 #include "selftest_streamload.h"   // StreamBehindLoadingScreen: sites (locate only)
 #include "selftest_ledger.h"       // diagnostic HitchLedger: sites, record/ring/csv format, cost per frame
@@ -2595,6 +2597,10 @@ int wmain(int argc, wchar_t** argv)
     vramc::Run(game);
     // ShaderScreenAfterDriverChange (selftest_shaderscreen.h).
     shs::Run(game);
+    // PsoRecordReplay (selftest_psorecord.h).
+    psr::Run();
+    // Diagnostic OtProfile / OtCrashContext (selftest_otprofile.h): after every fix that reads the OT frame's call sites.
+    otp::Run(game);
 
     // RestoreFsrAfterAltTab: FSR back on when a menu that was up at focus gain closes (the game's own focus-gained branch, run again).
     {
@@ -3019,6 +3025,11 @@ int wmain(int argc, wchar_t** argv)
         Check(at(pi.genericExec, 0x4919D40) && pi.numGenericSlots == 3, "pacing: generic command exe+0x4919D40, 3 slots");
         Check(at(pi.preTickReturn, 0x4899E17) && at(pi.postTickReturn, 0x4899B2D), "pacing: pre-tick call returns to exe+0x4899E17, post-tick to exe+0x4899B2D");
         Check(at(pi.tes, 0x941F748), "pacing: TES global exe+0x941F748");
+        {   // the RunSession(-1) site has one owner: NpcCreationPacing (OtProfile skips it when pacing is hooked)
+            const uint8_t otpRewrite[4] = {0x48, 0x8B, 0xCE, 0xE8};
+            Check(memcmp(game.base + 0x4899E0C, otpRewrite, 4) != 0,
+                  "pacing: the game thread's RunSession(-1) site is the game's own call, not OtProfile's rewrite (one owner)");
+        }
         Check(at(pi.delegateVtable[0], 0x7D76998) && at(pi.delegateExecIfSafe[0], 0x4852870) && pi.delegateSize[0] == 0x28 &&
                   !pi.delegateCopyCtor[0], "pacing: appearance delegate vtable exe+0x7D76998, size 0x28, plain copy");
         Check(at(pi.delegateVtable[1], 0x7D7F190) && at(pi.delegateExecIfSafe[1], 0x48B7A30) && pi.delegateSize[1] == 0x30 &&
@@ -4538,6 +4549,74 @@ int wmain(int argc, wchar_t** argv)
         VtStreamingUploadsTestSetup(nullptr);
     }
 
+    // StreamPrewarmBehindLoading: the cvar lookup, raise and restore on fake console variables (int kind, priority bits).
+    {
+        struct FakeCvar { void** vt; int32_t value; int32_t flags; };
+        struct FakeMgr { void** vt; };
+        static FakeCvar cv[5];
+        static void* cvVt[24] = {};
+        static void* otherVt[24] = {};
+        static void* mgrVt[32] = {};
+        static FakeMgr mgr;
+        static FakeMgr* mgrPtr;
+        static const wchar_t* const names[5] = {L"r.VT.MaxUploadsPerFrame.Streaming", L"r.VT.MaxUploadsPerFrame",
+            L"r.VT.MaxTilesProducedPerFrame", L"r.Streaming.FramesForFullUpdate", L"r.Streaming.MaxNumTexturesToStreamPerFrame"};
+        cvVt[0x18 / 8] = reinterpret_cast<void*>(+[](void* c) -> int32_t { return static_cast<FakeCvar*>(c)->flags; });
+        cvVt[0x80 / 8] = reinterpret_cast<void*>(+[](void* c, const wchar_t* v, int32_t f) {
+            FakeCvar* x = static_cast<FakeCvar*>(c);
+            if ((f & 0xFF000000) < (x->flags & 0xFF000000)) return;  // lower priority is refused, as the engine does
+            x->value = _wtoi(v);
+            x->flags = (x->flags & 0x00FFFFFF) | (f & 0xFF000000);
+        });
+        cvVt[0x90 / 8] = reinterpret_cast<void*>(+[](void* c) -> int32_t { return static_cast<FakeCvar*>(c)->value; });
+        mgrVt[0xC0 / 8] = reinterpret_cast<void*>(+[](void*, const wchar_t* n, bool) -> void* {
+            for (int i = 0; i < 5; ++i) if (!wcscmp(n, names[i]) && cv[i].vt) return &cv[i];
+            return nullptr;
+        });
+        mgr.vt = mgrVt;
+        mgrPtr = &mgr;
+        const int32_t scal = 0x04000000;  // SetByScalability-like priority
+        cv[0] = {cvVt, 4, scal};
+        cv[1] = {cvVt, 8, scal};
+        cv[2] = {otherVt, 8, scal};      // another kind: left alone
+        cv[3] = {cvVt, 5, scal};
+        cv[4] = {cvVt, 0, scal};         // 0 = unlimited: left alone
+        FakeCvar pool = {cvVt, 4096, scal};
+        StreamPrewarmTestSetup(reinterpret_cast<void**>(&mgrPtr));
+        StreamPrewarmBegin(&pool);
+        Check(!StreamPrewarmActive() && cv[0].value == 4, "stream prewarm: off by default, nothing raised");
+        SetStreamPrewarm(true, 5000, false);
+        Check(StreamPrewarmHoldMs() == 3000, "stream prewarm: extra hold capped at 3000 ms");
+        SetStreamPrewarm(true, 0, false);
+        StreamPrewarmBegin(&pool);
+        Check(StreamPrewarmActive(), "stream prewarm: raised");
+        Check(cv[0].value == 64 && cv[1].value == 64, "stream prewarm: upload budgets raised");
+        Check(cv[2].value == 8, "stream prewarm: a variable of another kind is not touched");
+        Check(cv[3].value == 1, "stream prewarm: the update interval lowered");
+        Check(cv[4].value == 0, "stream prewarm: an unlimited (0) budget is left");
+        Check(cv[0].flags == scal, "stream prewarm: the variable's priority kept");
+        cv[1].value = 100;  // the game changed one meanwhile
+        StreamPrewarmEnd(3);
+        Check(!StreamPrewarmActive() && cv[0].value == 4 && cv[3].value == 5, "stream prewarm: values put back exactly");
+        Check(cv[1].value == 100, "stream prewarm: a value the game changed meanwhile is kept");
+        cv[0].value = 100; cv[1].value = 8;  // already above the target: never lowered
+        StreamPrewarmBegin(&pool);
+        Check(cv[0].value == 100, "stream prewarm: a value already faster is not slowed");
+        StreamPrewarmEnd(0);
+        Check(cv[0].value == 100 && cv[3].value == 5, "stream prewarm: second transition restores too");
+        SetStreamPrewarm(true, 0, true);
+        StreamPrewarmBegin(&pool);
+        Check(cv[0].value == 100 && cv[1].value == 64, "stream prewarm: VtStreamingUploads' variable left to that key");
+        StreamPrewarmEnd(0);
+        Check(cv[1].value == 8, "stream prewarm: restored with the key on");
+        cv[3].value = 5;
+        mgrPtr = nullptr;  // no console manager yet: nothing happens
+        StreamPrewarmBegin(&pool);
+        Check(!StreamPrewarmActive() || cv[3].value == 5, "stream prewarm: no manager, no change");
+        StreamPrewarmEnd(0);
+        StreamPrewarmTestSetup(nullptr);
+    }
+
     // FrameGenCrashGuard: AMD FidelityFX's command list pool, the game's own amd_fidelityfx_dx12.dll loaded here, on a WARP device. The
     // guard installs from the DLL load notification; with the queue held by a fence wait and all 8 lists of a type taken,
     // the library's function would read through a null slot (the 10-08 / 10-13 crashes); the guard waits for the queue.
@@ -5054,9 +5133,29 @@ int wmain(int argc, wchar_t** argv)
                   !SharedMemoryGpuWanted(2, GpuMemoryKind::Shared, false, 32 * 1024) &&
                   !SharedMemoryGpuWanted(2, GpuMemoryKind::Shared, true, 16 * 1024) &&
                   !SharedMemoryGpuWanted(2, GpuMemoryKind::Dedicated, false, 16 * 1024),
-              "SharedMemoryGpu=2: a 16 GB Windows handheld yes; a 24 GB Ally X, a 32 GB APU, Proton/CrossOver (Wine), a graphics card no");
+              "SharedMemoryGpu=2: a 16 GB handheld yes; a 24 GB Ally X, a 32 GB APU, Wine with SharedMemoryGpuWine=0, a graphics card no");
+        Check(Config().sharedMemoryGpuWine && Config().psoColdGuardWine && Config().osPageCacheKeepMs == 0 &&
+                  Config().osPageCacheTrace == 0 && Config().osPageCacheTraceMB == 64,
+              "defaults: SharedMemoryGpuWine=1, PsoColdGuardWine=1, OsPageCacheKeepMs=0 (the seconds key), OsPageCacheTrace=0 (64 MB)");
+        {
+            Config c;
+            bool rule = Config().shaderGateBeforePlay == 1 && Config().shaderGateMaxSeconds == 600 && Config().shaderScreenLinux;
+            for (int v : {0, 1, 2})
+                for (bool wine : {false, true}) {
+                    c.shaderGateBeforePlay = v;
+                    rule = rule && ShaderGateWanted(c) == (v == 2 || (v == 1 && IsWine()));
+                    (void)wine;
+                }
+            Check(rule, "defaults: ShaderGateBeforePlay=1 (on under Wine/Proton only; 2 everywhere, 0 off), ShaderGateMaxSeconds=600, ShaderScreenLinuxFingerprint=1");
+        }
         const SharedGpuHost host = SharedGpuHostFacts();
-        Check(!host.wine && host.ramMB >= 1024, "SharedMemoryGpu: this PC is Windows itself (no wine_get_version) and its RAM is known");
+        if (IsWine()) {
+            printf("SKIP  SharedMemoryGpu: this PC is Windows itself (no wine_get_version): not asserted under Wine/Proton\n");
+            Check(host.ramMB >= 1024, "SharedMemoryGpu: its RAM is known (under Wine)");
+            Check(!host.wine, "SharedMemoryGpuWine=1 (default): Wine does not keep the GPU unasked");
+        } else {
+            Check(!host.wine && host.ramMB >= 1024, "SharedMemoryGpu: this PC is Windows itself (no wine_get_version) and its RAM is known");
+        }
         Check(!SharedMemoryGpuWaitForAnswer(0) && !SharedMemoryGpuWaitForAnswer(1) &&
                   SharedMemoryGpuWaitForAnswer(2) == (host.ramMB < kSharedGpuMaxRamMB),
               "RdgParallelTranslate=2 waits for the GPU's answer only where SharedMemoryGpu could apply (not on a 20 GB+ PC)");
@@ -5067,7 +5166,7 @@ int wmain(int argc, wchar_t** argv)
         Check(r.shared && r.upload && r.lumen && !r.translate && !r.osCache,
               "SharedMemoryGpu=2 on a 16 GB UMA Windows PC: UploadMemoryKeep and LumenKeepArrayCapacity as stock, relief.shared set");
         MemoryReliefTestSharedGpu(GpuMemoryKind::Shared, 2, true, 16 * 1024, &r);
-        Check(!r.shared && !r.upload && !r.lumen, "SharedMemoryGpu=2 under Wine (Steam Deck, CrossOver): nothing changes");
+        Check(!r.shared && !r.upload && !r.lumen, "SharedMemoryGpu=2 under Wine with SharedMemoryGpuWine=0: nothing changes (the Steam Deck / CrossOver rule before the key)");
         MemoryReliefTestSharedGpu(GpuMemoryKind::Shared, 2, false, 64 * 1024, &r);
         Check(!r.shared && !r.upload && !r.lumen, "SharedMemoryGpu=2 on a 64 GB UMA PC: nothing changes");
         MemoryReliefTestSharedGpu(GpuMemoryKind::Dedicated, 2, false, 16 * 1024, &r);
@@ -5079,6 +5178,50 @@ int wmain(int argc, wchar_t** argv)
         MemoryReliefTestSharedGpu(GpuMemoryKind::Shared, 0, false, 16 * 1024, &r);
         Check(!r.shared && !r.upload && !r.lumen, "SharedMemoryGpu=0 on a UMA GPU: the fixes as configured");
         Check(GameGpuMemoryKind() == GpuMemoryKind::Pending, "SharedMemoryGpu: the test put the live kind back");
+
+        // The monitor thread's ini read: parsed only when the file changed (size or last-write time) or is under 2 s old
+        {
+            wchar_t tmp[MAX_PATH];
+            GetTempPathW(MAX_PATH, tmp);
+            wcscat_s(tmp, L"opf-selftest-config.ini");
+            const auto writeIni = [&](const char* text) {
+                HANDLE h = CreateFileW(tmp, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+                DWORD w;
+                if (h != INVALID_HANDLE_VALUE) {
+                    WriteFile(h, text, static_cast<DWORD>(strlen(text)), &w, nullptr);
+                    CloseHandle(h);
+                }
+            };
+            // Deterministic: the file's last-write time is set explicitly and the clock is injected (Wine's file times and
+            // the system clock need not agree to 2 s).
+            const ULONGLONG T0 = 133000000000000000ull, SEC = 10000000ull;   // 100 ns units
+            const auto stamp = [&](ULONGLONG t) {
+                HANDLE h = CreateFileW(tmp, FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+                FILETIME ft{static_cast<DWORD>(t), static_cast<DWORD>(t >> 32)};
+                if (h != INVALID_HANDLE_VALUE) {
+                    SetFileTime(h, nullptr, nullptr, &ft);
+                    CloseHandle(h);
+                }
+            };
+            ULONGLONG now = T0 + 100 * SEC;
+            writeIni("[Fixes]\r\nOsPageCacheMB=77\r\n");
+            stamp(T0);
+            Config c;
+            Check(LoadConfigIfChanged(tmp, &c, &now) && c.osPageCacheMB == 77, "config: the first read parses the ini");
+            now = T0 + 1 * SEC;
+            Check(LoadConfigIfChanged(tmp, &c, &now), "config: a file written under 2 s ago is parsed again (still being written?)");
+            now = T0 + 3 * SEC;
+            Check(!LoadConfigIfChanged(tmp, &c, &now), "config: unchanged and older than 2 s -> not parsed (the cached values stay)");
+            writeIni("[Fixes]\r\nOsPageCacheMB=99\r\n");   // same size, new last-write time
+            stamp(T0 + 10 * SEC);
+            Check(LoadConfigIfChanged(tmp, &c, &now) && c.osPageCacheMB == 99, "config: a changed file is parsed within one tick");
+            writeIni("[Fixes]\r\nOsPageCacheMB=1234\r\n");   // longer: the size changed
+            stamp(T0 + 11 * SEC);   // (Wine's profile-string cache keys on the file time, so each version gets its own)
+            Check(LoadConfigIfChanged(tmp, &c, &now) && c.osPageCacheMB == 1234, "config: a size change is parsed");
+            DeleteFileW(tmp);
+            Check(LoadConfigIfChanged(tmp, &c, &now) && c.osPageCacheMB == Config().osPageCacheMB, "config: a missing ini reads as the defaults");
+            Check(!LoadConfigIfChanged(tmp, &c, &now), "config: ... and a still-missing ini is not re-read every second");
+        }
 
         // CommandAllocatorTrim's tight level: the old rule unchanged without a shared GPU, always tight with one.
         const uint64_t G = 1ull << 30, H = 2 * G;

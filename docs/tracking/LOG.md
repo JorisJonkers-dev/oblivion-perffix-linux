@@ -1,0 +1,637 @@
+# Findings log
+
+Newest first. Each entry gives its date, the finding, its evidence and its confidence. Runs: [runs.md](runs.md).
+Investigations: [investigations.md](investigations.md).
+
+## 2026-11-07
+
+### Pause: proven fixes installed in the player's game
+- **Installed DLL:** `02144ca7` (built from `pso-replay` = docs-tracking + compressed record), as `version.dll`.
+- **ini:** the new shipped ini with `PsoRecordReplay=1`, `VtStreamingUploads=64`, `FadeVtFlushSkip=1`. Defaults otherwise
+  (`ShaderGateBeforePlay=1`, `RdgSubmitBatch=32`, diagnostics off).
+- **`OblivionPerfFix-psorecord.bin`:** 2912 pipelines, 128 MB.
+- **Steam launch option:** back to `WINEDLLOVERRIDES="version=n,b" %command%`.
+- **Backup of the original 1.2.4 DLL and ini:** `~/Projects/opf-run/backup-installed-20261107-1452/`.
+- **Check run (`installed-check`, no `--dll`):**
+  - replay 2912/2912 with 0 failures;
+  - the gate held 1.5 s and the precompile finished before play;
+  - VT uploads 64 and the VT flush skip are active;
+  - canal 71 fps with 0 hitches; IC market 88.5 fps with 1 hitch of 94 ms.
+
+### PSO replay with the compressed record (`pso-record5` → `pso-replay5`)
+- Record: 2911 pipelines, file 127.7 MB.
+- Replay: 2911/2911 with 0 failures, in 0.2 s.
+- In play during replay: 1 new PSO in 5 min; total 2.2 s against 4.2 s in the record run; max 8.9 ms; no creations
+  ≥20 ms.
+- Compression saved little: 121.7 MB of shaders. The 512 MB cap is enough for now.
+
+
+### Turn-settle: the metric saturates at the canal; Lumen and VT variants unresolved (`spin-turn-canal2`)
+| Variant | Settle | Lighting | Pop-in | Missing regions at t=0 | fps | 0.1% low |
+|---|---|---|---|---|---|---|
+| base | 2.65 s | 2.36 s | 2.50 s | 20 | 82.5 | 62.1 |
+| lumfast (`FastCameraMode=1`, `MaxFramesAccumulated` 10→4) | 2.60 s | 2.41 s | 2.55 s | 18.5 | 84.1 | 65.0 (+5%) |
+| vtup (VT uploads 64, `FramesForFullUpdate` 5→2) | 2.65 s | 2.45 s | 2.56 s | **16.5** | 82.6 | 59.9 |
+
+- **Measurement flaw:** every variant settles at about 2.5–2.65 s, which is the 3 s window minus the 0.5 s tail. The
+  canal is never still (water, foliage, NPCs, FSR jitter), so the metric hits its ceiling.
+- The SSIM "drop" of about 0.10 even for vtup (which should be image-identical once settled) shows the scene differs
+  between slots (NPCs, time). Not usable as an image cost yet.
+- Only weak signal: vtup has fewer missing regions at t=0 (20 → 16.5) at no fps cost.
+- Fixes in progress (branch `turn-settle2`):
+  - motion-masked or structure-only settle;
+  - a 6 s window, reported as ">X s" when not settled;
+  - faster capture;
+  - freezing time and AI during turn and shot laps;
+  - calm test spots.
+
+
+### Turn-settle, first live result (`spin-turn-canal`, canal, replay on, 16 turns per variant)
+| Variant | Settle | Lighting | Pop-in | Missing regions at t=0 | Luma settle |
+|---|---|---|---|---|---|
+| base | **2.56 s** | 2.25 s | 2.56 s | 18.5 | 1.36 s |
+| proxy0 (`r.PSOPrecache.ProxyCreationWhenPSOReady=0`) | 2.51 s (~) | 2.20 s | 2.41 s | 18.0 | 1.20 s |
+
+- The owner's observation is confirmed: the picture needs about 2.5 s after a turn, for both lighting and objects.
+- The PSO proxy delay is **not** the cause, at least with replay on.
+- Luminance curves are mostly exponential with τ ≈ 1.1 s, so eye adaptation adds to the lighting settle.
+- Shots now land within 0.9° of the requested heading (camera read-back +0.9°, systematic). The base-vs-base SSIM floor
+  rose from 0.30 to 0.63.
+- Turn capture ran every 0.20 s (109 ms per grab), so settle times are good to ±0.2 s.
+- Next: Lumen response (`FastCameraMode`, fewer accumulated frames) and VT/streaming upload budgets (`spin-turn-canal2`).
+
+### Display layout reset again
+- Cause: the owner switched the TV on.
+- Restored: HDMI-2 portrait-left 1920x1080@144, HDMI-1 2560x1440@144 primary.
+- Consider persisting a 3-monitor configuration in `monitors.xml` so GNOME stops falling back to 60 Hz landscape.
+
+
+### PSO record-and-replay works: runtime PSO creation time −70%, no ≥20 ms creations (`pso-record4` → `pso-replay4`)
+8 random spots, seed 1, DLL `623f0cc0`, `PsoRecordReplay=1`.
+
+| | Record run | Replay run |
+|---|---|---|
+| Creations in play | 5493 | 5517 (4652 already replayed) |
+| Total creation time | 10.9 s | **3.3 s** |
+| Creations ≥20 ms | 31 | **0** |
+| Max | 45 ms | 14.4 ms |
+
+- Replay at start: 2029 of 2159 recorded pipelines (127 MB of shaders) in 0.1 s on 3 threads, during the gate hold. It
+  mostly warms the in-process caches.
+- **Limit:** the record hit `PsoRecordMaxMB=128` partway through, hence 570 "new" PSOs in minute 5 of the replay run.
+  Raise the default (512 MB?) or store shader bytecode deduplicated more tightly.
+- **Issues found on the way:**
+  - The hook first landed on a device of our own; fixed by hooking `D3D12CreateDevice`.
+  - `g_played` was never set after the gate; fixed with `PsoPlayStarted()` and a per-minute log line.
+  - A leftover `CrashReportClient` from a GPU crash blocked launches ("WaitingPrevProcess"); the runner guard is in
+    progress.
+- **Next:**
+  - Turn-settle and pop-in A/B with and without replay.
+  - fps and hitches A/B.
+  - Then consider making it the default.
+
+### GPU profiler: stock u_trace layer caused GPU crashes
+- The RADV u_trace build loads in pressure-vessel, but tracing every submit on every queue from the first frame crashed
+  the GPU before the world loaded.
+- The driver is now patched: graphics queue only, a capture window (trigger file, or N s after start, for N frames), and
+  stats off by default.
+- Staged test: first idle (driver loaded, no window), then a 40-frame window at the canal.
+
+
+### Runtime PSO creation in play is large, even with warm caches (`pso-measure`, 8 random spots seed 1, `PsoRecordReplay=2`)
+| Minute of play | New PSOs | Time | Creations ≥20 ms | Max |
+|---|---|---|---|---|
+| 1 | 1391 | 11.8 s | 165 | 135 ms |
+| 2 | 1397 | 2.1 s | 10 | 48 ms |
+| 3 | 1375 | 0.6 s | 0 | 4 ms |
+| 4 | 848 | 0.8 s | 6 | 37 ms |
+| 5 | 655 | 1.4 s | 22 | 64 ms |
+
+- In total, 5666 pipeline creations and 16.7 s of creation time in about 5 min of play.
+- UE5's runtime PSO precaching compiles through vkd3d during play. This is likely the main source of late pop-in (proxies
+  are delayed until their PSOs are ready) and of small hitches.
+- The record/replay is meant to move this before play.
+
+### Record run captured nothing (`pso-record`)
+- The hook landed on "a device of our own" (in the measure run it was "the game's"), and the game's PSO creations did not
+  pass through it.
+- Being fixed: hook the game's device deterministically (via D3D12CreateDevice, or the device of a game-owned object),
+  plus a loud log line if the hook sees no game creations.
+
+### Turn-settle measurement merged (`spin --turn-settle`)
+- Separate settle times for total, lighting (low-pass), pop-in (edge regions) and luminance curve class.
+- Not run live yet.
+
+
+### First cvar trade-off sweep at the canal (`spin-sweep-canal`, 4 slots per variant): no gains
+| Variant | avg fps | 1% low | 0.1% low | Hitches |
+|---|---|---|---|---|
+| base | 87.4 | 69.5 | 66.3 | 0 |
+| lumrefl: Reflections.DownsampleFactor 2, MaxRoughnessToTraceForFoliage 0 | 86.8 (~) | 68.8 | 62.4 | 0 |
+| vsm: SMRT rays 16→4, samples 4, MarkCoarsePagesDirectional 0 | 82.8 | 51.0 | **45.1 (−32%)** | 4 |
+| probes: ScreenProbeGather.DownsampleFactor 16→24 | 88.6 (~) | 70.5 | 66.7 | 0 |
+
+- `r.Lumen.HardwareRayTracing.Reflections.HitLighting` was not read back, so it may not exist in this build.
+- Base values read back: SMRT ray count 16, screen probe downsample 16, MaxRoughnessToTraceForFoliage 0.4.
+- Lumen reflections and probe resolution are not where the GPU time goes at the canal. The VSM pack hurts, probably
+  because of `MarkCoarsePages=0`.
+- **The SSIM comparison is invalid:** the base-vs-base floor was 0.30, because shots of the "same" heading are offset by
+  a few pixels. Being fixed with camera snapping plus image registration, and a `reshots` re-evaluation (branch
+  `ssim-align`).
+- **Lesson:** stop guessing cvars. Get a per-pass GPU profile first (RGP via RADV, vkd3d queue profiling, or UE GPU
+  stats), then target the top passes (branch `gpu-profile`).
+
+
+### All 8 hotspots with our DLL `c7e911ea` (fresh `coc` start, own settings)
+The shader gate also covers the `coc` path: precompile finished before play at +35.7 s.
+
+| Spot | fps | 1% low | Worst frame | GPU |
+|---|---|---|---|---|
+| canal | 69.1 | 59.6 | 21.8 ms | 97% |
+| IC market crowd | 72.2 | 66.9 | 106.8 ms (2 hitches) | 99% |
+| Peryite shrine | 68.0 | 48.2 | – | 99% |
+| Blackwood | 97.1 | 80.5 | – | 99% |
+| Silver Road climb | 99.5 | 78.0 | – | 99% |
+| Roxey Inn, night | 80.2 | 65.2 | – | 99% |
+| Fort Doublecross pond, rain | 66.2 | 59.6 | – | 99% |
+| chapel square | 64.4 | 59.8 | – | 99% |
+
+- Static spots are smooth and GPU-bound everywhere. The only hitches are in the crowd.
+- More fps therefore needs GPU-side changes: the cvar trade-off sweep is running.
+- Pop-in and smoothness during movement need the turn-settle metric (in progress).
+
+### Owner observation: late pop-in on turning, and night lighting filling in over time
+Small objects appear only once the camera turns toward them; at night the lighting converges visibly after a turn.
+
+Suspects:
+- PSO precache proxy delay (`r.PSOPrecache.ProxyCreationStrategy`), made worse by vkd3d compile speed;
+- view-dependent Nanite and texture streaming;
+- Lumen surface cache and lighting update budgets;
+- VSM local-light page caching;
+- eye adaptation and volumetric fog temporal smoothing.
+
+Root-cause research → `ideas/popin-lighting.md`. Measurement → `spin --turn-settle` (branch `turn-settle`).
+
+
+### Shader gate works (DLL `c7e911ea`, branch `gate-fix`)
+The run started with Continue from the main menu while the precompile was still going. The log, in order:
+
+| Time | Event |
+|---|---|
+| +29.3 s | menu left; the first gate tick decides |
+| +35.1 s | the load waits; 23 pipelines queued |
+| +38.0 s | **shader precompile finished before play** |
+| +38.1 s | released after 3.0 s, 6 ticks skipped, then the fade-in |
+
+Before the fix the precompile finished IN PLAY, at +53 to +71 s.
+
+### Lesson: never load the owner's saves in benchmarks
+- After the Continue load, the run stalled for 5 min in the state `menu=1 loadscreen=1 frozen=1 mainmenu=1`. Some menu
+  or dialog appeared on the owner's tutorial autosave.
+- Owner: benchmarks must run on their own at varied spots, never needing the player.
+- Rule: use fresh `coc` starts only (the default). Don't use `--start continue` against the owner's saves.
+
+
+### Owner rule change: slight image changes allowed for sufficient gains
+- Allowed only when the gain is at least about 5% fps, or clearly fewer hitches or better lows.
+- The visible difference must be minimal: SSIM against the base at the same headings, plus side-by-side images.
+- Every such change is an opt-in switch.
+- Spec stories 51–53 cover this. Tooling is in progress: `spin --shots` (branch `spin-ssim`) and a cvar candidate list
+  (`ideas/quality-cvars.md`).
+
+### Content modding: feasible but unproven; settings first
+Source: [../research-linux/ideas/content-modding.md](../research-linux/ideas/content-modding.md).
+
+- **Feasible:**
+  - mod packs load from `Content/Paks/~mods` (`.pak` + `.utoc` + `.ucas`);
+  - no signature check was found;
+  - the toolchain exists: retoc (MIT) for IoStore, UAssetAPI/UAssetGUI (MIT) for property edits, plus a `.usmap`.
+- **No precedent for gains:** no community mod shows a gain from property-edited meshes, foliage or shadows. The popular
+  performance mods are ini packs, measured as close to placebo. Upstream measured foliage and view distance as cheap on
+  the GPU.
+- **Plan:**
+  - Sweep cvars first.
+  - Do a time-boxed content probe (shadow casting off on small flora/clutter, A/B/A with SSIM) only if the cvar sweep
+    shows headroom in shadows or foliage.
+  - The probe needs the owner's OK to download retoc, UAssetGUI/UAssetAPI with .NET, and a `.usmap`. A hands-on spike
+    was blocked by the safety check for exactly that reason.
+- **Licence:** publish scripts that read the user's own install; never publish modified assets.
+
+
+### OsPageCache, real gameplay trace (`dll3-gate-doors`, 326 s with 2 transitions): already near its ceiling. Closed
+- Live hit rate 64.1%. The ceiling for exact-size reuse (unbounded, never trimmed) is 71.0%.
+- Grid search, optimising for ms saved with the measured Wine miss costs:
+
+| Policy | Hit rate | ms saved over 326 s |
+|---|---|---|
+| current: 64 MB, 5 s | 64.1% | 4843 |
+| 192 MB, 60 s | 68.2% | 5285 |
+| 512 MB, LRU | 70.0% | about 5440 |
+
+- The best realistic setting saves about 0.44 s more over 5.4 min, roughly 1.4 ms/s, at 3× the memory.
+- The earlier 13–30% hit rates were start-up only: the start-up ceiling is 15.7%, the `dll2` diag-run ceiling 40%.
+- Decision: keep the shipped defaults. Investigation 20 closed. The trace and simulator tools stay for later.
+
+### Shader gate did not hold a Continue load either; the runner misread the load (`dll3-gate-doors`)
+- The save loaded about 10 s after Continue (fade-in at 12:02:32), yet the gate logged "never needed, play has begun;
+  0 ticks skipped". The precompile then finished IN PLAY at +71 s.
+- The `[pso]` "in play" switch at +27.1 s came about 5 s before the fade-in, so the gate probably saw play as started
+  too early. The save load was also not counted as a transition ("0 save loads").
+- The runner's `--start continue` reported "the save did not load" after 5 min.
+- Being fixed on branch `gate-fix`.
+
+
+### Crash fixed: clang-cl `/EHsc` dropped `__try` handlers (branch `crashfix`, DLL `c1b57556`)
+- The crash was at `VERSION+0x19fcd` = `ExecHook` in `diagnostics/tick_split.cpp:347`: `ProbeKind` read a stale
+  `tf+0x28` target.
+- Its `__try` had been compiled out: clang-cl `/EHsc` drops SEH scopes that contain only loads. MSVC keeps them.
+- `build-dll.sh` now uses `/EHa`, so 486 functions carry handlers. It also emits a PDB and a map file;
+  `linux/symbolize.sh` reads them.
+- The new `seh_probe` self-test check fails the build if the flag ever regresses. Self-test: 1612/0.
+- Still open: one read in `ClassOf` (`obj+0x10`) sits outside its `__try`.
+
+### First old-engine (OT) profile, live (`dll2-diag`, Cheydinhal chapel square + canal, own settings)
+The OT is **not the limit** in town at these settings.
+
+| Measure | Value |
+|---|---|
+| OT cycle | 13.8 ms |
+| Busy | 3.5 ms (25%) |
+| Idle, waiting on the game thread | 10.3 ms (75%) |
+| Busy time: `pl_update` (ProcessLists::Update) | 2.3 ms |
+| Busy time: `lvl_high` (high-process AI) | 2.1 ms |
+| Busy time: `lvl_low` | 0.24 ms |
+| Busy time: water | 0.2 ms |
+| Busy time: other, untimed (includes the Havok step) | 0.9 ms |
+| Slow OT cycles (≥10 ms) | 4 of 3628, worst 42.6 ms |
+
+- fps: chapel square 80.2, canal 64.5. GPU 98–99%, 0 hitches.
+- Consequence: OT parallelisation (C1–C3) won't raise average fps here. It can only help OT spikes: cell crossings,
+  crowds, saves. Next profiles should be travel (`silver-road`), crowds (`actors`) and saves.
+
+### Shader gate did not trigger in benchmark runs
+- The runner starts a new game with `coc`, which bypasses the menu-load path the gate watches. The log said "never
+  needed, play has begun". The precompile finished IN PLAY at +53 s.
+- Testing the normal Continue path next (`dll3-gate-doors`).
+- If the gate works there, the runner should use Continue too, or the gate should also cover `coc` loads.
+
+
+### First live run of the merged Linux-built DLL: crash 25 s after launch
+- DLL `9608de6e`, with `OtProfile=1`, `OsPageCacheTrace=1` and `--diag`.
+- The game crashed right after a burst of NPC create commands at the start of a new game.
+- Error: `EXCEPTION_ACCESS_VIOLATION reading address 0x00000e080000bb91`.
+- Stack: `VERSION+0x19fcd` ← exe+0x37c1959 … ← `VERSION+0xc430` ← exe+0x37c9e14 … ← UE4SS. The runner restored the
+  installed DLL and ini.
+- Before the crash these worked: the trace writer, the OT profiler install (12 stages timed) and the Linux shader
+  fingerprint (`wine=11.0`, Proton Experimental 11.0-20261027b, vkd3d hashes, Mesa 26.2.6).
+- Being fixed (branch `crashfix`): map the offsets with a link map or PDB, then fix the root cause. `build-dll.sh` will
+  also emit symbols from now on.
+- Until the fix lands, nothing more runs with the Linux-built DLL.
+
+### OsPageCache trace from start-up (29 s, 19.6k eligible allocations): exact-size reuse has a low ceiling
+- Live hit rate: 12.6%.
+- Ceiling for exact-size reuse with an unbounded cache that never trims: **15.7%** (peak 975 MB). Larger caps or longer
+  keep times cannot help at start-up.
+- 352 distinct sizes. 64 KB is 45% of requests; most others are odd sizes in 4 KB steps (36–80 KB).
+- The only real lever is serving from a larger block (rounding up), which depends on whether UE's Binned2 tolerates a
+  block larger than it asked for. Unproven.
+- Needs a gameplay trace (doors, travel) before deciding anything.
+
+
+### OsPageCache offline tuning kit (branch `oscache-sim`)
+**Tools:**
+- Trace recorder: `OsPageCacheTrace=1`, writes `OblivionPerfFix-oscache-trace.bin`.
+- Replay simulator: `tools/oscache_sim.py`, with grid search, a Pareto front and `--obj ms`.
+- Wine miss-cost benchmark: `linux/oscache-bench.sh`.
+
+**Cost of a miss under Wine 11.21 on this PC:** `VirtualAlloc` itself costs 3.5–4.5 µs. The real cost is the first touch
+of each page, about 1.8 µs per page.
+
+| Block | Miss cost |
+|---|---|
+| 64 KB | 28.5 µs |
+| 1 MB | 346 µs |
+| 16 MB | 1.35 ms |
+
+With 4 threads contending, a miss costs about 3.5× more. That fits Wine's single lock on its virtual-memory code.
+
+**Synthetic trace** (fitted to the logged totals; the policy numbers below are therefore indicative):
+
+| Policy | Hit rate |
+|---|---|
+| Current | 31.8% |
+| 256 MB, 15 s | 43.5% |
+| 256 MB, 15 s, LRU | 51% |
+| Unbounded ceiling | 88% |
+
+**First live A/B:** `OsPageCacheMB=256`, `OsPageCacheKeepMs=15000`, with `OsPageCacheTrace=1` recording in the same run.
+Exact-size reuse only. Policies that hand out larger blocks wait until it is known that the game's allocator tolerates
+a bigger block than it asked for.
+
+
+### Canal spin of the render and cache switches (`spin-canal-render`, 4 slots each): `RdgSubmitBatch` stays on
+| Variant | avg fps | 1% low | 0.1% low | Worst frame | Hitches | GPU |
+|---|---|---|---|---|---|---|
+| base | 75.5 | 56.0 | 38.2 | 32.2 ms | 0 | 98% |
+| `RdgParallelTranslate=0` | 80.0 (+6%, noise) | | 42.0 | 38.1 ms | 0 | |
+| **`RdgSubmitBatch=0`** | 68.3 | 37.4 (−33%) | **18.4 (−52%)** | **56.2 ms** | **8** | **91%** |
+| `OsPageCache=0` | 79.0 (+5%, noise) | | 44.2 (+16%) | | 2 | |
+
+- `RdgSubmitBatch` clearly helps under Proton. Keep it on.
+- `RdgParallelTranslate=0` and `OsPageCache=0` look slightly better, but within noise. Retest them in a quiet run (the
+  OsPageCache simulator is in progress).
+- Noise was high: slot-to-slot spread 33–40%, against 15% earlier. Likely cause: agents building with clang and running
+  Wine self-tests on the same machine during the spin.
+- **Rule:** no heavy builds or Wine self-tests while a benchmark runs. Check `pgrep -f "clang|wine|selftest"` before
+  starting one.
+- `--warmup auto` works: it ended when `[pso] shader precompile finished` appeared, at +65.7 s after launch.
+
+
+### Detail arrival, re-analysed with brightness-normalised sharpness: switches help on entering interiors only
+Metric: Laplacian variance divided by the squared mean luminance. Timing starts once the brightness has been stable for
+1 s. Re-analysis of the `vtdoor` A/B: 3+3 runs, medians, base → `VtStreamingUploads=64` + `FadeVtFlushSkip=1`.
+
+| Door | Brightness stable | Sharp after it | Sharp, counted from arrival |
+|---|---|---|---|
+| inn enter | 3.9 → 3.4 s | 0 → 0 s | 5.9 → 3.4 s |
+| inn exit | 4.4 → 4.6 s | 3.5 → 4.1 s | 7.9 → 9.1 s |
+| chapel enter | 3.4 → 3.8 s | **4.0 → 0.0 s (all 3 runs)** | 7.4 → 3.8 s |
+| chapel exit | 4.2 → 4.2 s | 4.0 → 4.0 s | 8.1 → 8.2 s |
+| west gate enter | 4.6 → 4.6 s | 0 → 0 s | 4.6 → 4.6 s |
+| west gate exit | 4.3 → 4.7 s | 0 → 0 s | 4.3 → 4.7 s |
+
+- Entering interiors: detail arrives 2.5–3.5 s sooner with the switches.
+- Leaving to exteriors: no change. Detail keeps sharpening for about 3.5–4.5 s after the brightness settles on both sides.
+  That is real streaming, and these switches don't address it.
+- The earlier 0.03 and 0.06 ratios were dark frames: an artefact of the old metric.
+- Verdict: small benefit, and FPS was mixed (inn enter −13%, the rest within noise). Candidate to enable after a
+  confirmation run. Exterior detail arrival is open: see `texture-streaming.md`, the loading-screen prewarm idea.
+
+
+### Door test of `VtStreamingUploads=64` + `FadeVtFlushSkip=1` with detail arrival (3+3 runs): inconclusive
+Report: [runs/20261107-111019-vtdoor.md](runs/20261107-111019-vtdoor.md). The detail capture (xwd through XWayland) works live.
+
+| Door | Sharp after (s) | Sharpness at 1 s |
+|---|---|---|
+| Inn, entering | 7.9 → 8.1 | 0.03 → 0.97 |
+| Inn, leaving | 3.5 → 4.1 | ~ |
+| Chapel, entering | 4.5 → 0.5 | 0.90 → 1.00 |
+| Chapel, leaving | 2.5 → 5.5 | ~ |
+| West gate, leaving | 0.0 → 3.5 | ~ (at 2 s: 0.99 → 0.06) |
+
+- Interior entries look clearly better with the switches; exits are mixed.
+- FPS is mixed: inn entry −13%, the rest within noise.
+- **Problem with the metric:** Laplacian variance falls with brightness, so the fade-in tail and eye adaptation read as
+  blur. The 0.03 and 0.06 values are almost certainly dark frames, not blurry ones.
+- Fix needed: normalise sharpness by luminance (or use gradient energy over mean luminance), and start timing only once
+  the brightness is stable.
+- Not adopted yet.
+
+
+### Run-log analysis (Haiku): the runner's own sync stalls polluted the ledgers
+Source: [../research-linux/ideas/run-log-analysis.md](../research-linux/ideas/run-log-analysis.md).
+
+The runner makes two 350 ms sync frames to align the MangoHud log. They made up 61–68% of the ledger's "unlabelled:
+before the world tick" bucket in the `cs-ab3` runs. The earlier conclusion that half of all slow-frame time is
+unlabelled was wrong: that half was mostly the runner's own stalls.
+
+With the sync frames removed:
+- **PSO precompile in play is the main real cost.** The precompile ends 40–58 s after reaching the world, which is
+  longer than the 40 s warm-up. It accounts for 302 of 317 ms of real excess in on-r2. The driver-thread guard finds no
+  driver compile threads under Wine, so it does nothing here.
+- **Frame-end sync and GPU waits** are large in slow frames; the GPU is the limit at these settings.
+- **NPC units:** one unit alone costs 17–61 ms, and the 4 ms budget is overrun 3–9 times per run.
+- **Steady tick:** `VPairedPawnMovementComponent` costs 0.63 ms per frame (26% of listed tick time).
+- **`OsPageCache`:** hit rate only 17–44%, with about 10k releases over its 64 MB cap.
+- No periodic spike pattern, so no sign of GC or autosave timers. No memory pressure.
+
+Fix under way: the runner's warm-up will wait for the PSO precompile to finish, and diag analysis will be limited to the
+measured windows (branch `runner-warmup`).
+
+
+### Idea reviews (Haiku), in `docs/research-linux/ideas/`
+
+**render-streaming.md**
+- Re-measure `RdgSubmitBatch` and `RdgParallelTranslate` on RADV; their costs and savings were measured on Windows D3D12.
+- Check whether async-compute cvars exist in this build, then flip them live.
+- Skip TLAS rebuilds when the inputs are identical.
+- Make Nanite's Hierarchy and ImposterData keep their capacity.
+- Make the RT upload buffers keep their size.
+
+**npc-physics-loading.md**
+- Near-create waiting behind far deferred creates: needs a counter first.
+- Revive PerceptionIgnoreReuse (lab: 441k comparisons with zero differences, about 6% less crowd GT time).
+- Measure, then warm, character PSOs.
+- Pre-touch memory at the loading screen.
+- Parallel save serialisation, an estimated 10–20 ms per save.
+
+**core-memory-guards.md**
+- A long-session soak with an object-count CSV and first-chance access-violation logging.
+- A UMA memory policy that works under Wine.
+- A start-up scan cache, about 0.8 s per launch.
+- A/B `OsPageCache` under Proton.
+- Re-parse the ini only when it changed.
+
+**run-log-analysis.md**: still being written.
+
+### Method correction: tick split adds overhead
+`HitchLedgerTickSplit` adds up to about 0.4 ms per frame in crowds. In `cs-ab3` only the fix-on side had `--diag`, so
+that side carried extra overhead; the small gain there is, if anything, understated. From now on, A/B comparisons run
+without `--diag`, with separate diag runs.
+
+
+### `VKD3D_CONFIG=no_upload_hvv` at the canal: no measurable gain (2+2 runs)
+
+| Variant | fps (r1 / r2) | 1% lows | Worst frame |
+|---|---|---|---|
+| base | 63.7 / 67.0 | 54.2 / 54.5 | 40.0 / 20.0 ms |
+| no_upload_hvv | 64.2 / 68.9 | 40.9 / 56.8 | 27.8 / 19.5 ms |
+
+The difference is within run-to-run noise. Not adopted. Investigation 18 stays open for other identical-image GPU options.
+
+### Monitor layout reset by GNOME (not a benchmark setting)
+The Sony TV on DP-1 became active and GNOME fell back to default modes: everything landscape at 60 Hz. The layout was
+restored with `gnome-monitor-config` to the saved one: HDMI-2 portrait-left at 144 Hz, HDMI-1 2560x1440 at 144 Hz as
+primary, DP-1 off.
+- Pitfall: the tool repeats `-t` on later logical monitors, so give `-t normal` explicitly for each.
+- Before the next benchmark, check that the layout and refresh rates are intact.
+
+
+### First spin session: canal, base vs `VtStreamingUploads=64` (`spin-canal-vt64`)
+Report: [runs/20261107-100653-spin-canal-vt64.md](runs/20261107-100653-spin-canal-vt64.md).
+
+**The spin method works:**
+- Laps inside a slot agree within 1–3 fps.
+- Live ini flips take effect.
+- The ledger anchors to the frame log and splits by variant.
+
+**Result:**
+- Base: 80.2 fps; vt64: 81.3 fps. All differences are within noise: 1% low −2%, 0.1% low +10%, worst frame 22.9 → 27.1 ms.
+- That is expected: the switch targets detail arriving after doors, and nothing streams at a static spot.
+
+**The canal at the user's settings is GPU-bound** (GPU 98%, CPU 56%).
+- By heading, SE is about 102 fps and W/NW about 68 fps, the worst.
+- The CPU-side fixes (most of OblivionPerfFix) cannot raise average fps here.
+- Gains at GPU-bound spots must come from GPU efficiency at identical image: vkd3d/driver options, async compute,
+  upload paths. Or the work targets hitches and pop-in rather than average fps.
+
+**Lessons:**
+- The first slot after the warm-up runs low (73 vs 83 fps in later base slots). Add a throw-away first slot, or a
+  longer settle.
+- Test `VtStreamingUploads` / `FadeVtFlushSkip` on door scenes (`cheydinhal` inn-door, `transitions`), not spins.
+
+
+### Chapel square, 3 balanced rounds: no regression from the fix (`cs-ab3`)
+Report: [runs/20261107-100513-cs-ab3.md](runs/20261107-100513-cs-ab3.md).
+
+| | Fix not loaded | Fix on | Change |
+|---|---|---|---|
+| avg fps | 69.2 | 70.0 | +1%, within noise |
+| 1% low | 55.7 | 58.3 | +5% |
+| 0.1% low | 45.5 | 54.1 | +19% |
+| worst frame | 25.8 ms | 18.8 ms | −27% |
+
+- Neutral to slightly positive. The earlier −25% and the CPU-bound episodes did not repeat in 6 balanced runs, so
+  they were not caused by the fix itself.
+- The spread between sessions is large: without the fix, fps went from 64 to 74 here, against 94 earlier today.
+- Suspect for the spread: FSR. The game turns FSR off when its window loses focus, so it renders at 100% instead of
+  58.8%. Run on-r1 caught exactly that: `r.ScreenPercentage changed during the pass: 58.8 -> 100`. The user working
+  on the PC during runs, or the window not being in front, probably explains the episodes.
+- Next:
+  - record focus and ScreenPercentage per scene;
+  - keep the game in front;
+  - consider the `small` profile (no FSR) for CPU-side work.
+
+### Hitch ledger on Linux (first data, `cs-ab3` on-r1)
+Slow frames in play, by share of excess time:
+
+| Cause | Share |
+|---|---|
+| Unlabelled (async loading, GC and streaming at the frame tail) | 50% |
+| PSO precompile still running after the 40 s warm-up (render- or GPU-bound) | 24% |
+| Render-thread bound | 14% |
+| Actor arrival | 7% |
+| Tick work | 4% |
+
+At start-up in the menu, one 2.6 s old-engine wait.
+
+Lessons:
+- The warm-up should wait until the PSO precompile has finished, not a fixed 40 s.
+- The unlabelled half is what the C0 old-engine profiler and DoorDiag should break down.
+
+
+### Chapel square: the slowdown comes in episodes where the CPU spikes and the GPU waits
+At Cheydinhal's chapel square, some runs fall into a mode where the CPU is the limit, with many hitches. The fix-group
+runs show this is an episode, not a constant cost of one fix group.
+
+| Run | fps | Hitches | CPU / GPU |
+|---|---|---|---|
+| Fix not loaded (2 runs) | 94 | 0 | 56% / 97% |
+| Fix on, round 1 | 87 | 0 | 54% / 98% |
+| **Fix on, round 2** | **53** | **36** | **81% / 79%** |
+| Fix on, diag run | 76.5 | 0 | 56% / 98% |
+| Render-threading fixes off | 79 | 0 | 52% / 98% |
+| **NPC fixes off** | **42** | **146** | **82% / 69%** |
+| Physics fixes off | 83 | 0 | 59% / 95% |
+
+- Hypothesis: a burst of NPC creation or AI work at the square. It was worst with the NPC fixes off, and so far it has
+  never happened with the fix not loaded (2 of 2 runs).
+- Confidence: low (single runs). A follow-up is running: `cs-ab3`, 3 balanced rounds with `--diag`.
+
+### MangoHud can write a garbage frametime
+One row in `cs-keep-off` held 37,337,300 ms, which broke that run's stats (it showed 0 fps). The parser now replaces any
+frametime longer than 2 × the row gap + 50 ms with the gap. `cs-keep-off` needs a rerun.
+
+### Benchmarks run from their own worktree
+Chains now run from `~/Projects/opf-run`, a detached worktree whose `linux/results` and `linux/third_party` are symlinks
+to the main checkout. Agents working on branches can no longer change code under a running benchmark.
+
+
+### Process: give each agent its own git worktree
+Several agents shared one checkout and switched branches in it, while benchmark chains ran code from that same
+checkout. Rule from now on:
+- every agent works in its own `git worktree` (`~/Projects/opf-<name>`);
+- the main checkout stays on `linux-bench`, and only the main session runs the game.
+
+### The fix's regression at the chapel square comes and goes
+The busiest town spot got slower with OblivionPerfFix on in the first comparison, but not in the next run.
+
+| Run | Fix not loaded | Fix on |
+|---|---|---|
+| Off-vs-on comparison, Cheydinhal chapel square (2+2 runs, own settings) | 94.0 fps | 70.3 fps (−25%), 18 hitches, GPU 97% → 88% |
+| `cs-base-diag`, the next run, same spot | – | 76.5 fps, 0 hitches, GPU 98% |
+| `cs-render-off` | – | 79.0 fps |
+
+Confidence: low. Next: a balanced series with 3 or more rounds, plus the fix-group bisect (`cs-*` runs).
+
+### Off vs on at the player's own settings (2 rounds)
+Report: [runs/20261107-093709-own-off-vs-on.md](runs/20261107-093709-own-off-vs-on.md).
+- Settings are GPU-bound: 97–98% GPU load.
+- Doors with the fix on:
+  - fps: +9–11%;
+  - 1% lows: +34% entering, +87% leaving;
+  - the 1.6–1.9 s loading frame stays on both sides.
+- Road run with the fix on: −10% fps, but 0.1% lows +49% and fewer hitches (5 → 2).
+- Canal with the fix on: −6% fps.
+
+### MangoHud does not log with `no_display`
+With `no_display` set, MangoHud wrote no CSV at all. The runner now keeps a visible overlay (fps, frame-time graph,
+CPU/GPU) while logging. The red dot is MangoHud's logging indicator, and it cannot be hidden.
+
+### The Linux benchmark works end to end under Proton
+UE4SS loads through `WINEDLLOVERRIDES=dwmapi=n,b`, and the in-game mod's file protocol works on `Z:/` paths. A run:
+1. starts a new game with no save (`coc`);
+2. runs the scenes;
+3. closes the game;
+4. restores settings, saves and the fix's ini;
+5. removes UE4SS from the game folder.
+
+Lining up the MangoHud log with the game's own clock: the runner makes one deliberately long frame (a 350 ms busy loop)
+at a known time and finds it in the log. That places the log to about ±30 ms, against ±0.5 s from the file name alone.
+
+### Character pop-in comes mostly from main-thread work
+Each NPC costs the main thread 20–40 ms in steps that can't be split. Whole steps can't run off the main thread, because
+UE 5.3 creates objects only there. The candidates:
+- helper-thread physics and cloth preparation;
+- warming character shaders before they are needed;
+- a capped loading-screen drain.
+
+Evidence: [../research-linux/npc-creation.md](../research-linux/npc-creation.md).
+
+### Texture detail after doors is limited by the virtual-texture upload cap
+- `r.VT.MaxUploadsPerFrame.Streaming` is 4. In the repo's own measurement, 64 took detail settling from about 8–10 s
+  down to about 2.4 s.
+- The fade-in's `r.VT.Flush` throws away textures streamed behind the loading screen.
+- Both have existing switches that are off by default: `VtStreamingUploads` and `FadeVtFlushSkip`.
+
+Evidence: [../research-linux/texture-streaming.md](../research-linux/texture-streaming.md). Not yet measured on Linux.
+
+### Preloading has a hard limit
+Most of the costly work comes from the old engine attaching a cell, so it cannot exist before the cell does. Without
+changing gameplay, only these can move earlier:
+- read-only file warming;
+- shader cache persistence;
+- garbage collection placement;
+- the tail of the loading screen.
+
+Evidence: [../research-linux/preloading.md](../research-linux/preloading.md).
+
+### The fix DLL builds on Linux
+clang-cl, lld-link and llvm-ml with xwin's MSVC CRT and SDK build it with no source patches, in about 23 s
+(`linux/build-dll.sh`, branch `linux-build`). Not yet self-tested against the exe, and not yet run under Wine.
+
+### Owner rules (standing)
+- Keep Lumen, lighting and image quality.
+- Changes to the old engine are allowed: multithreading and offloading its work, and fixing its problems.
+- Keep gameplay exploits and old gameplay bugs.
+- Work on the worst spots first, using a spinning camera and live switches.
+- Subagents run on Sonnet or Haiku.
+
+### Proton and Linux setup lessons
+- `ntfs3` cannot create symlinks on the shared NTFS volume, so the drive must be mounted with `ntfs-3g`.
+- Proton prefixes live on ext4, through a symlink.
+- Edit Steam's `localconfig.vdf` only while Steam is fully closed.
+- Wolfenstein II's 60 FPS cap came from vsync halving the rate on XWayland, which `mailbox` mode fixed. Its FPS limit
+  lives in `com_adaptiveTickMaxHz`.
+
+Full setup notes: the `linux-gaming` repo.

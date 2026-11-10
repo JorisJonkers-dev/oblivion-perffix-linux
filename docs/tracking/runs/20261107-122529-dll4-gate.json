@@ -1,0 +1,32 @@
+{
+ "diagFiles": null,
+ "dll": {
+  "path": "/home/ExtraToast/Projects/opf-run/build-linux/OblivionPerfFix.dll",
+  "sha256": "c7e911ea393ccc4b5b8cdad74252aa6f5c4ca4914803a3081af8c522b3ab3b05",
+  "size": 1861120
+ },
+ "env": {
+  "MANGOHUD": "1",
+  "MANGOHUD_CONFIGFILE": "/home/ExtraToast/Projects/opf-run/linux/results/20261107-122529-dll4-gate/mangohud.conf",
+  "OBLV_BENCH_MARKER": "/home/ExtraToast/Projects/opf-run/run/launch-marker.txt",
+  "OBLV_GAME_ARGS": "-FixedSeed",
+  "WINEDLLOVERRIDES": "version=n,b;dwmapi=n,b"
+ },
+ "fix": "on",
+ "fixIniOverrides": null,
+ "label": "dll4-gate",
+ "loadSec": null,
+ "outcome": "failed",
+ "profile": {
+  "description": "Your own settings as they are (resolution, window mode, upscaler, quality, frame cap): nothing is changed. Used by -Watch. Results depend on those settings, so say which ones you used when you share them",
+  "name": "own",
+  "own": true
+ },
+ "scenario": "cheydinhal",
+ "scenes": [],
+ "start": "continue",
+ "time": "2026-11-07 12:25:29",
+ "warnings": [
+  "run stopped: RuntimeError: the save did not load (last state: level=L_PersistentDungeon pawn=1 sub=L_ImperialDungeon01 travel=0 menu=1 loadscreen=1 frozen=1 mainmenu=1)"
+ ]
+}
